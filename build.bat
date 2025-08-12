@@ -12,6 +12,8 @@ set LFLAGS=/incremental:no
 
 if not exist build mkdir build
 pushd build
-REM call cl ..\src\example1.cpp /Fe:example1.exe %CFLAGS% /link %LFLAGS%
-call cl ..\src\example2.cpp /Fe:example2.exe %CFLAGS% /link %LFLAGS%
+::call cl ..\src\example1.cpp /Fe:example1.exe %CFLAGS% /link %LFLAGS%
+::call cl ..\src\example2.cpp /Fe:example2.exe %CFLAGS% /link %LFLAGS%
+::call cl ..\src\example3.cpp /Fe:example3.exe %CFLAGS% /link %LFLAGS%
+call cl ..\src\example4.cpp /Fe:example4.exe %CFLAGS% /link %LFLAGS%
 popd

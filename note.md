@@ -73,6 +73,18 @@ The text is immutable.
 <span style="color: #ffa0a0">**:=**</span> Represents a physical font, with a specific *weight*, *slant*, and *stretch*.<br>
 `IDWriteFontFace` can be created directly from a font name or obtained from a font collection.
 
-## 3-4. Glpyh Metrics
+## 3-4. Glyph Metrics
 Each glyph has its own metric.<br>
 `IDWriteFontFace::GetDesignGlyphMetrics` gives metrics for all glyphs.
+
+# <span style="color: #ffa0a0">4. API</span>
+
+## 4-1. IDWriteGlyphRunAnalysis
+DWrite and D2D rasterization uses it under the hood.<br>
+Chromium and skia uses uses it for rasterization.
+
+## 4-1. IDWriteTextLayout
+Font fallback and glyph shaping are costly.<br>
+It is supposed to be convenient way to cache that.<br>
+You repeatedly draw the same thing without the big CPU cost.<br>
+`IDWriteFontFallback::MapCharacters` and `IDWriteTextAnalyzer::GetGlyphs` are fairly expensive calls.
