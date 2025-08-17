@@ -7,13 +7,11 @@ where /q cl || (
     exit /b 1
 )
 
-set CFLAGS=/nologo /std:c++17 /Z7 /FC
+set CFLAGS=/nologo /std:c++17 /Z7 /FC /utf-8 /DBUILD_DEBUG=1
 set LFLAGS=/incremental:no
+set LIBS=user32.lib gdi32.lib dwrite.lib d3d11.lib d2d1.lib 
 
 if not exist build mkdir build
 pushd build
-::call cl ..\src\example1.cpp /Fe:example1.exe %CFLAGS% /link %LFLAGS%
-::call cl ..\src\example2.cpp /Fe:example2.exe %CFLAGS% /link %LFLAGS%
-::call cl ..\src\example3.cpp /Fe:example3.exe %CFLAGS% /link %LFLAGS%
-call cl ..\src\example4.cpp /Fe:example4.exe %CFLAGS% /link %LFLAGS%
+call cl ..\src\main.cpp /Fe:main.exe %CFLAGS% /link %LFLAGS% %LIBS%
 popd

@@ -22,7 +22,7 @@ struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
             return S_OK;
         }
 
-        *ppvObject = nullptr;
+        *ppvObject = NULL;
         return E_NOINTERFACE;
     }
 
@@ -59,10 +59,67 @@ struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
         return E_NOTIMPL;
     }
 
-private:
     const wchar_t* _locale;
     const wchar_t* _text;
     const UINT32 _text_length;
+};
+
+
+typedef Dwrite_Text_Analysis_Sink_Result Dwrite_Text_Analysis_Sink_Result; 
+struct Dwrite_Text_Analysis_Sink_Result 
+{
+    UINT32 text_position;
+    UINT32 text_length;
+    DWRITE_SCRIPT_ANALYSIS analysis;
+};
+
+// DirectWrite uses an IDWriteTextAnalysisSink to inform the caller of its segmentation results. The most important part are the
+// DWRITE_SCRIPT_ANALYSIS results which inform the remaining steps during glyph shaping what script ("language") is used in a piece of text.
+typedef Dwrite_Text_Analysis_Sink Dwrite_Text_Analysis_Sink;
+struct Dwrite_Text_Analysis_Sink final : IDWriteTextAnalysisSink 
+{
+    Dwrite_Text_Analysis_Sink_Result *results;
+
+    ULONG STDMETHODCALLTYPE AddRef() noexcept override
+    { return 1; } 
+
+    ULONG STDMETHODCALLTYPE Release() noexcept override
+    { return 1; }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(const IID& riid, void** ppvObject) noexcept override
+    {
+        if (IsEqualGUID(riid, __uuidof(IDWriteTextAnalysisSink))) 
+        {
+            *ppvObject = this;
+            return S_OK;
+        }
+
+        *ppvObject = NULL;
+        return E_NOINTERFACE;
+    }
+
+    HRESULT STDMETHODCALLTYPE SetScriptAnalysis(UINT32 textPosition, UINT32 textLength, const DWRITE_SCRIPT_ANALYSIS* scriptAnalysis) noexcept override
+    {
+        Dwrite_Text_Analysis_Sink_Result result = {};
+        {
+            result.text_position = textPosition;
+            result.text_length   = textLength;
+            result.analysis      = *scriptAnalysis;
+        }
+
+        arrput(results, result);
+
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE SetLineBreakpoints(UINT32 textPosition, UINT32 textLength, const DWRITE_LINE_BREAKPOINT* lineBreakpoints) noexcept override
+    { return E_NOTIMPL; }
+
+    HRESULT STDMETHODCALLTYPE SetBidiLevel(UINT32 textPosition, UINT32 textLength, UINT8 explicitLevel, UINT8 resolvedLevel) noexcept override
+    { return E_NOTIMPL; }
+
+    HRESULT STDMETHODCALLTYPE SetNumberSubstitution(UINT32 textPosition, UINT32 textLength, IDWriteNumberSubstitution* numberSubstitution) noexcept override
+    { return E_NOTIMPL; }
 };
 
 
@@ -73,8 +130,8 @@ struct Dwrite_Map_Characters_Result
     UINT32 mapped_length = 0;
 };
 
-typedef struct Text_Complexity_Result Text_Complexity_Result;
-struct Text_Complexity_Result
+typedef struct Dwrite_Map_Complexity_Result Dwrite_Map_Complexity_Result;
+struct Dwrite_Map_Complexity_Result
 {
     UINT16 *glyph_indices;
     UINT32 index_count;
@@ -82,24 +139,15 @@ struct Text_Complexity_Result
     BOOL is_simple = FALSE;
 };
 
-typedef struct Owned_Glyph_Run Owned_Glyph_Run;
-struct Owned_Glyph_Run 
+typedef struct Dwrite_Glyph_Run Dwrite_Glyph_Run;
+struct Dwrite_Glyph_Run
 {
-    DWRITE_GLYPH_RUN glyph_run;
+    DWRITE_GLYPH_RUN run;
 
-    IDWriteFontFace5 *font_face;
-
-    UINT16 *indices;
-    UINT32 index_count;
-
-    FLOAT *advances;
-    UINT32 advance_count;
-
+    UINT16              *indices;
+    FLOAT               *advances;
     DWRITE_GLYPH_OFFSET *offsets;
-    UINT32 offset_count;
 };
-
-
 
 
 #endif // LSW_DWRITE_H

@@ -1,244 +1,273 @@
-// @NOTE:
-// This function performs an iterative "font fallback" starting at text_offset.
-// In most cases it'll simply look up the given base_family in the given font_collection and return that (= your primary font).
-// But if the base_family doesn't have glyphs for the given text, it'll find another, alternative font and return that one.
-// For instance, if the text contains emojis but your font doesn't have any, it'll return a font that does (= e.g. Segoe UI Emoji).
-// DirectWrite implements 2 font fallback models:
-// 'IDWriteFontFallback' implements the weight-stretch-style model.
-// 'IDWriteFontFallback1' implements the more modern typographic model (Windows 10 RS3 and later).
-static Dwrite_Map_Characters_Result
-dwrite_map_characters(IDWriteFontFallback1 *font_fallback,
-                      IDWriteFontCollection *base_font_collection,
-                      WCHAR *locale, WCHAR *base_family, 
-                      WCHAR *text, UINT32 text_length, UINT32 text_offset)
+// @Note: Determines the longest run of characters that map 1:1 to glyphs without
+// ambiguity. In that case, it returns TRUE and you can immediately use indices.
+// Otherwise, perform full glyph shaping.
+static Dwrite_Map_Complexity_Result
+dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
+                           IDWriteFontFace *font_face,
+                           const WCHAR *text, UINT32 text_length)
 {
-    Dwrite_Map_Characters_Result result = {};
+    Dwrite_Map_Complexity_Result result = {};
 
-    Dwrite_Text_Analysis_Source analysis_source = {locale, text, text_length};
+    BOOL is_simple;
+    UINT32 mapped_length;
+    UINT32 index_count = text_length;
+    UINT16 *indices = new UINT16[index_count];
 
-    // @QUOTE: "I believe it's safe to ignore scale in practice." -lhecker
-    FLOAT scale;
-
-    HRESULT hr = font_fallback->MapCharacters(&analysis_source, text_offset, text_length,
-                                              base_font_collection, base_family,
-                                              nullptr/*fontAxisValues*/, 0/*fontAxisValueCount*/,
-                                              &result.mapped_length, &scale, &result.mapped_font_face);
-
+    HRESULT hr = text_analyzer->GetTextComplexity(text, text_length, font_face,
+                                                  &is_simple, &mapped_length, indices);
     assume(SUCCEEDED(hr));
 
+    result.glyph_indices = indices;
+    result.index_count   = index_count;
+    result.is_simple     = is_simple;
+    result.mapped_length = mapped_length;
+
     return result;
 }
 
-
-// @NOTE:
-// 'IDWriteTextAnalyzer::GetTextComplexity()' will determine the longest
-// run of characters that map 1:1 to glyphs without any ambiguity.
-// If so, it'll return TRUE, and you can use the returned indices immediately.
-// Otherwise, you must perform full glyph shaping.
-static Text_Complexity_Result
-dwrite_map_text_complexity(IDWriteTextAnalyzer1 *text_analyzer, IDWriteFontFace *font_face, WCHAR *text, UINT32 text_length)
-{
-    Text_Complexity_Result result = {};
-    result.glyph_indices = (UINT16 *)malloc(sizeof(UINT16)*text_length);
-
-    text_analyzer->GetTextComplexity(text, text_length, font_face, &result.is_simple, &result.mapped_length, result.glyph_indices);
-    return result;
-}
-
-
-// @NOTE: Computes glyph advances.
-static void
-dwrite_map_glyphs_simple(IDWriteFontFace5 *font_face, FLOAT font_size,
-                         UINT16 *indices, UINT32 index_count, Owned_Glyph_Run *run)
-{
-    DWRITE_FONT_METRICS1 metrics;
-    font_face->GetMetrics(&metrics);
-
-    // Retrives the advancs in design units for according glyph indices.
-    INT32 *design_advances = new INT32[index_count];
-    font_face->GetDesignGlyphAdvances(index_count, indices, design_advances, FALSE);
-
-    UINT32 total_glyph_count = run->index_count;
-
-    run->advances = new FLOAT[total_glyph_count + index_count];
-    run->offsets = new DWRITE_GLYPH_OFFSET[total_glyph_count + index_count];
-
-    run.glyph_indices.insert(run.glyph_indices.end(), indices, indices + indices_count);
-    run->indices.insert(run->indices.end(), indices, indices + indices_count);
-    run->advances.resize(total_glyph_count + indices_count);
-    run->offsets.resize(total_glyph_count + indices_count);
-
-    FLOAT scale = font_size / metrics.designUnitsPerEm;
-    for (UINT32 i = 0; i < indices_count; i++) 
-    {
-        run->advances[total_glyph_count++] = design_advances[i] * scale;
-    }
-}
-
-
-// This function performs proper (complex) glyph shaping.
-// Since this function performs only the most simple form of glyph shaping (i.e. not justification, etc.), it requires just 3 steps.
-static void
-dwrite_map_glyphs_complex(IDWriteTextAnalyzer1 *analyzer,, WCHAR *locale,
-                          IDWriteFontFace5 *font_face, FLOAT font_size, 
-                          WCHAR *text, UINT32 text_length,
-                          Owned_Glyph_Run *run)
-{
-    TextAnalysisSource analysis_source{locale, text, text_length};
-    TextAnalysisSink analysis_sink;
-    std::vector<u16> cluster_map;
-    std::vector<DWRITE_SHAPING_TEXT_PROPERTIES> text_props;
-    std::vector<DWRITE_SHAPING_GLYPH_PROPERTIES> glyph_props;
-
-    // This equation comes from the GetGlyphs() documentation.
-    size_t total_glyph_count = run.glyph_indices.size();
-    const auto estimated_final_glyph_count = total_glyph_count + (3 * text_length) / 2 + 16;
-    run.glyph_indices.resize(estimated_final_glyph_count);
-    run.glyph_advances.resize(estimated_final_glyph_count);
-    run.glyph_offsets.resize(estimated_final_glyph_count);
-
-    // Step 1: Split the text into runs of the same script ("language"), BiDi, etc.
-    // This only performs the absolute minimum with AnalyzeScript. Other Analyze* methods are available.
-    THROW_IF_FAILED(text_analyzer->AnalyzeScript(&analysis_source, 0, text_length, &analysis_sink));
-
-    for (const auto& analysis_result : analysis_sink.results) {
-        // This equation comes from the GetGlyphs() documentation.
-        auto estimated_glyph_count = (3 * analysis_result.text_length) / 2 + 16;
-        auto estimated_glyph_count_next = total_glyph_count + estimated_glyph_count;
-
-        // Fulfill the "_Out_writes_(...)" requirements of GetGlyphs().
-        if (cluster_map.size() < analysis_result.text_length) {
-            cluster_map.resize(analysis_result.text_length);
-            text_props.resize(analysis_result.text_length);
-        }
-        if (run.glyph_indices.size() < estimated_glyph_count_next) {
-            run.glyph_indices.resize(estimated_glyph_count_next);
-        }
-        if (glyph_props.size() < estimated_glyph_count) {
-            glyph_props.resize(estimated_glyph_count);
-        }
-
-        u32 actual_glyph_count = 0;
-
-        // Step 2: Map the given text into glyph indices.
-        for (int retry = 0;;) {
-            const auto hr = text_analyzer->GetGlyphs(
-                /* textString          */ text + analysis_result.text_position,
-                /* textLength          */ analysis_result.text_length,
-                /* fontFace            */ font_face,
-                /* isSideways          */ false,
-                /* isRightToLeft       */ 0,
-                /* scriptAnalysis      */ &analysis_result.analysis,
-                /* localeName          */ locale,
-                /* numberSubstitution  */ nullptr,
-                /* features            */ nullptr,
-                /* featureRangeLengths */ nullptr,
-                /* featureRanges       */ 0,
-                /* maxGlyphCount       */ static_cast<u32>(run.glyph_indices.size()),
-                /* clusterMap          */ cluster_map.data(),
-                /* textProps           */ text_props.data(),
-                /* glyphIndices        */ run.glyph_indices.data() + total_glyph_count,
-                /* glyphProps          */ glyph_props.data(),
-                /* actualGlyphCount    */ &actual_glyph_count
-            );
-
-            if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) && ++retry < 8) {
-                estimated_glyph_count *= 2;
-                estimated_glyph_count_next = total_glyph_count + estimated_glyph_count;
-                run.glyph_indices.resize(estimated_glyph_count_next);
-                glyph_props.resize(estimated_glyph_count);
-                continue;
-            }
-
-            THROW_IF_FAILED(hr);
-            break;
-        }
-
-        auto actual_glyph_count_next = total_glyph_count + actual_glyph_count;
-        if (run.glyph_advances.size() < actual_glyph_count_next) {
-            auto size = run.glyph_advances.size() * 2;
-            size = std::max<size_t>(size, actual_glyph_count);
-            run.glyph_advances.resize(size);
-            run.glyph_advances.resize(size);
-        }
-
-        // Step 3: Get the glyph advances and the offsets relative to their target position.
-        THROW_IF_FAILED(text_analyzer->GetGlyphPlacements(
-            /* textString          */ text + analysis_result.text_position,
-            /* clusterMap          */ cluster_map.data(),
-            /* textProps           */ text_props.data(),
-            /* textLength          */ analysis_result.text_length,
-            /* glyphIndices        */ run.glyph_indices.data() + total_glyph_count,
-            /* glyphProps          */ glyph_props.data(),
-            /* glyphCount          */ actual_glyph_count,
-            /* fontFace            */ font_face,
-            /* fontEmSize          */ font_size,
-            /* isSideways          */ false,
-            /* isRightToLeft       */ 0,
-            /* scriptAnalysis      */ &analysis_result.analysis,
-            /* localeName          */ locale,
-            /* features            */ nullptr,
-            /* featureRangeLengths */ nullptr,
-            /* featureRanges       */ 0,
-            /* glyphAdvances       */ run.glyph_advances.data() + total_glyph_count,
-            /* glyphOffsets        */ run.glyph_offsets.data() + total_glyph_count
-        ));
-
-        total_glyph_count = actual_glyph_count_next;
-    }
-
-    run.glyph_indices.resize(total_glyph_count);
-    run.glyph_advances.resize(total_glyph_count);
-    run.glyph_offsets.resize(total_glyph_count);
-}
-
-
-// This combines all of the above to map a piece of text to a series of DWRITE_GLYPH_RUNs.
-static std::vector<OwnedGlyphRun>
+static Dwrite_Glyph_Run *
 dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                           IDWriteFontCollection *font_collection,
                           IDWriteTextAnalyzer1 *text_analyzer,
-                          WCHAR *locale, WCHAR *base_family,
-                          FLOAT font_size, WCHAR *text, UINT32 text_length)
+                          const WCHAR *locale, const WCHAR *base_family,
+                          FLOAT font_size, const WCHAR *text, UINT32 text_length)
 {
-    std::vector<OwnedGlyphRun> runs;
+    Dwrite_Glyph_Run *result = NULL;
 
-    for (u32 fallback_offset = 0; fallback_offset < text_length;) {
-        auto fallback = dwrite_map_characters(font_fallback, font_collection, locale, base_family, text, text_length, fallback_offset);
+    UINT32 offset = 0;
+    while (offset < text_length)
+    {
+        UINT32 mapped_length;
+        IDWriteFontFace5 *mapped_font_face;
+        { // Perform fallback and acquire the run of identical font face. -> (fontface, offset, len)
+            FLOAT scale; // @Quote(lhecker): It's safe to ignore scale in practice.
 
-        // If no font contains the given codepoints MapCharacters() will return a nullptr font_face.
-        // We need to replace them with ? glyphs, which this code doesn't do yet (by convention that's glyph index 0 in any font).
-        if (!fallback.mapped_font_face) {
-            continue;
+            Dwrite_Text_Analysis_Source src = {locale, text, text_length};
+            font_fallback->MapCharacters(&src, offset, text_length, font_collection, base_family,
+                                         NULL, 0, &mapped_length, &scale, &mapped_font_face);
+
+            // @Todo: If no font contains the given codepoints MapCharacters() will return a NULL font_face.
+            // We need to replace them with ? glyphs, which this code doesn't do yet (by convention that's glyph index 0 in any font).
+            assume(mapped_font_face);
         }
 
-        auto fallback_beg = text + fallback_offset;
-        auto fallback_remaining = fallback.mapped_length;
-        auto& run = runs.emplace_back();
+        Dwrite_Glyph_Run run = {};
 
-        while (fallback_remaining > 0) {
-            const auto complexity = dwrite_map_text_complexity(text_analyzer, fallback.mapped_font_face.get(), fallback_beg, fallback_remaining);
+        // Once our string is segmented to runs of identical font face,
+        // we must now segment those once again into runs of same complexity.
+        const WCHAR *remain_txt = text + offset;
+        UINT32 remain_len = mapped_length;
 
-            if (complexity.is_simple) {
-                dwrite_map_glyphs_simple(fallback.mapped_font_face.get(), font_size, complexity.glyph_indices.data(), complexity.mapped_length, run);
-            } else {
-                dwrite_map_glyphs_complex(text_analyzer, locale, fallback.mapped_font_face.get(), font_size, fallback_beg, complexity.mapped_length, run);
+        while (remain_len > 0)
+        {
+            Dwrite_Map_Complexity_Result complexity = dwrite_map_complexity(text_analyzer, mapped_font_face, remain_txt, remain_len);
+
+            if (complexity.is_simple)
+            {
+                UINT32 glyph_count_add = complexity.index_count;
+                UINT32 glyph_count_old = arrlenu(run.indices);
+                UINT32 glyph_count_new = glyph_count_old + glyph_count_add;
+
+                arrsetlen(run.indices,  glyph_count_new);
+                arrsetlen(run.advances, glyph_count_new);
+                arrsetlen(run.offsets,  glyph_count_new);
+
+                INT32 *design_advances = NULL;
+                {
+                    arrsetlen(design_advances, glyph_count_add);
+                    HRESULT hr = mapped_font_face->GetDesignGlyphAdvances(glyph_count_add, complexity.glyph_indices, design_advances, FALSE /*RetrieveVerticalAdvance*/);
+                    assume(SUCCEEDED(hr));
+                }
+
+                DWRITE_FONT_METRICS1 metrics;
+                mapped_font_face->GetMetrics(&metrics);
+
+                FLOAT scale = font_size / metrics.designUnitsPerEm;
+                for (UINT i = 0; i < glyph_count_add; ++i)
+                {
+                    UINT idx = glyph_count_old + i;
+                    run.indices[idx]  = complexity.glyph_indices[i];
+                    run.advances[idx] = design_advances[i] * scale;
+                    run.offsets[idx]  = {};
+                }
+            }
+            else
+            {
+                //UINT32 length_estimate = (3 * length_text / 2 + 16);
+                UINT32 glyph_count_max = ;
+                UINT32 glyph_count_actual;
+
+                UINT16 *cluster_map = NULL;
+                DWRITE_SHAPING_TEXT_PROPERTIES *text_props = NULL;
+                UINT16 *glyph_indices = NULL;
+                DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props = NULL;
+
+                hr = GetGlyphs(remain_txt,
+                               /* in */
+                               UINT32 textLength,
+                               font_face,
+                               FALSE, // isSideways
+                               FALSE, // isRightToLeft,
+                               [in]           DWRITE_SCRIPT_ANALYSIS const      *scriptAnalysis,
+                               locale,
+                               NULL, //numberSubstitution,
+                               NULL, // features
+                               NULL, // featureRangeLengths
+                               0,    // featureRanges
+                               max_glyph_count,
+
+                               /* out */
+                               cluster_map, text_props, glyph_indices, glyph_props,
+                               &glyph_count_actual);
+
+                if (HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))
+                {
+                }
+                else
+                {
+                }
+                
+
+#if 0
+                // ??
+                Dwrite_Text_Analysis_Source analysis_source{locale, remain_txt, remain_len};
+
+                Dwrite_Text_Analysis_Sink analysis_sink;
+
+                // ??
+                UINT16 *cluster_map;
+                DWRITE_SHAPING_TEXT_PROPERTIES *text_props;
+                DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props;
+
+                // @Note: This equation comes from the GetGlyphs() documentation.
+                UINT64 glyph_count_current = arrlenu(run.indices);
+                UINT64 glyph_count_estimate = glyph_count_current + (3 * text_length) / 2 + 16;
+                arrsetlen(run.indices, glyph_count_estimate);
+                arrsetlen(run.advances, glyph_count_estimate);
+                arrsetlen(run.offsets, glyph_count_estimate);
+
+                // @Note: [1] Split the text into runs of the same script ("language"), bidi, etc.
+                // This only performs the absolute minimum with AnalyzeScript() which analyzes a text range for script boundaries.
+                hr = text_analyzer->AnalyzeScript(&analysis_source,
+                                                  0, // textPosition
+                                                  remain_len, // textLength ??????????????
+                                                  &analysis_sink);
+                assume(SUCCEEDED(hr));
+
+                for (UINT32 i = 0; i < arrlenu(analysis_sink.results); ++i)
+                {
+                    Dwrite_Text_Analysis_Sink_Result analysis_result = analysis_sink.results[i];
+
+                    // @Note: This equation comes from the GetGlyphs() documentation.
+                    auto estimated_glyph_count = (3 * analysis_result.text_length) / 2 + 16;
+                    auto estimated_glyph_count_next = total_glyph_count + estimated_glyph_count;
+
+                    // @Note: Fulfill the "_Out_writes_(...)" requirements of GetGlyphs().
+                    if (cluster_map.size() < analysis_result.text_length) 
+                    {
+                        cluster_map.resize(analysis_result.text_length);
+                        text_props.resize(analysis_result.text_length);
+                    }
+                    if (run.glyph_indices.size() < estimated_glyph_count_next) 
+                    {
+                        run.glyph_indices.resize(estimated_glyph_count_next);
+                    }
+                    if (glyph_props.size() < estimated_glyph_count) 
+                    {
+                        glyph_props.resize(estimated_glyph_count);
+                    }
+
+                    UINT32 actual_glyph_count = 0;
+
+                    // @Note: [2] Map the given text into glyph indices.
+                    for (UINT32 retry = 0;;) 
+                    {
+                        hr = text_analyzer->GetGlyphs(text + analysis_result.text_position,        // textString
+                                                      analysis_result.text_length,                 // textLength
+                                                      font_face,                                   // fontFace
+                                                      FALSE, // isSideways
+                                                      0, // isRightToLeft
+                                                      &analysis_result.analysis,                   // scriptAnalysis
+                                                      locale,
+                                                      NULL, // numberSubstitution
+                                                      NULL, // features
+                                                      NULL, // featureRangeLengths
+                                                      0, // featureRanges
+                                                      arrlenu(run.indices),  // maxGlyphCount
+                                                      cluster_map.data(),                          // clusterMap
+                                                      text_props.data(),                           // textProps
+                                                      run.glyph_indices.data() + total_glyph_count,// glyphIndices
+                                                      glyph_props.data(),                          // glyphProps
+                                                      &actual_glyph_count                          // actualGlyphCount
+                                                     );
+
+                        if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) && ++retry < 8) 
+                        {
+                            estimated_glyph_count <<= 1;
+                            estimated_glyph_count_next = total_glyph_count + estimated_glyph_count;
+                            run.glyph_indices.resize(estimated_glyph_count_next);
+                            glyph_props.resize(estimated_glyph_count);
+                            continue;
+                        }
+
+                        THROW_IF_FAILED(hr);
+                        break;
+                    }
+
+                    auto actual_glyph_count_next = total_glyph_count + actual_glyph_count;
+                    if (run.glyph_advances.size() < actual_glyph_count_next) {
+                        auto size = run.glyph_advances.size() * 2;
+                        size = std::max<size_t>(size, actual_glyph_count);
+                        run.glyph_advances.resize(size);
+                        run.glyph_advances.resize(size);
+                    }
+
+                    // Step 3: Get the glyph advances and the offsets relative to their target position.
+                    THROW_IF_FAILED(text_analyzer->GetGlyphPlacements(
+                                                                      /* textString          */ text + analysis_result.text_position,
+                                                                      /* clusterMap          */ cluster_map.data(),
+                                                                      /* textProps           */ text_props.data(),
+                                                                      /* textLength          */ analysis_result.text_length,
+                                                                      /* glyphIndices        */ run.glyph_indices.data() + total_glyph_count,
+                                                                      /* glyphProps          */ glyph_props.data(),
+                                                                      /* glyphCount          */ actual_glyph_count,
+                                                                      /* fontFace            */ font_face,
+                                                                      /* fontEmSize          */ font_size,
+                                                                      /* isSideways          */ false,
+                                                                      /* isRightToLeft       */ 0,
+                                                                      /* scriptAnalysis      */ &analysis_result.analysis,
+                                                                      /* localeName          */ locale,
+                                                                      /* features            */ NULL,
+                                                                      /* featureRangeLengths */ NULL,
+                                                                      /* featureRanges       */ 0,
+                                                                      /* glyphAdvances       */ run.glyph_advances.data() + total_glyph_count,
+                                                                      /* glyphOffsets        */ run.glyph_offsets.data() + total_glyph_count
+                                                                     ));
+
+                    total_glyph_count = actual_glyph_count_next;
+                }
+
+                arrsetlen(run.indices, total_glyph_count);
+                arrsetlen(run.advances, total_glyph_count;
+                arrsetlen(run.offsets, total_glyph_count);
+#endif
             }
 
-            fallback_beg += complexity.mapped_length;
-            fallback_remaining -= complexity.mapped_length;
+            remain_txt += complexity.mapped_length;
+            remain_len -= complexity.mapped_length;
         }
 
-        run.font_face = std::move(fallback.mapped_font_face);
-        run.glyph_run.fontFace = run.font_face.get();
-        run.glyph_run.fontEmSize = font_size;
-        run.glyph_run.glyphCount = static_cast<u32>(run.glyph_indices.size());
-        run.glyph_run.glyphIndices = run.glyph_indices.data();
-        run.glyph_run.glyphAdvances = run.glyph_advances.data();
-        run.glyph_run.glyphOffsets = run.glyph_offsets.data();
+        run.run.fontFace       = mapped_font_face;
+        run.run.fontEmSize     = font_size;
+        run.run.glyphCount     = arrlenu(run.indices);
+        run.run.glyphIndices   = run.indices;
+        run.run.glyphAdvances  = run.advances;
+        run.run.glyphOffsets   = run.offsets;
 
-        fallback_offset += fallback.mapped_length;
+        // Append to the list of runs.
+        arrput(result, run);
+        offset += mapped_length;
     }
-
-    return runs;
+    
+    return result;
 }
