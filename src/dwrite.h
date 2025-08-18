@@ -1,7 +1,6 @@
 #ifndef LSW_DWRITE_H
 #define LSW_DWRITE_H
 
-// @NOTE: Thank you Leonard Hecker!
 typedef struct Dwrite_Text_Analysis_Source Dwrite_Text_Analysis_Source;
 struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
 {
@@ -141,7 +140,7 @@ struct Dwrite_Map_Complexity_Result
 typedef struct Dwrite_Glyph_Run Dwrite_Glyph_Run;
 struct Dwrite_Glyph_Run
 {
-    DWRITE_GLYPH_RUN run;
+    DWRITE_GLYPH_RUN    run;
     IDWriteFontFace5    *font_face;
     UINT16              *indices;
     FLOAT               *advances;

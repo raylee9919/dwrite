@@ -24,6 +24,9 @@
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+
 //--------------------
 // @Note: [.h]
 #include "basic.h"
@@ -93,6 +96,15 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                                 NULL, NULL, hinst, NULL);
     assume(hwnd);
 
+    // ------------------------------
+    // @Note: Query QPC frequency.
+    FLOAT counter_frequency_inverse;
+    {
+        LARGE_INTEGER li = {};
+        QueryPerformanceFrequency(&li);
+        counter_frequency_inverse = 1.f / (FLOAT)li.QuadPart;
+    }
+
 
     // @Note: Init DWrite
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -102,8 +114,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     FLOAT const dip_per_inch = 96.0f;
     FLOAT const dip_per_em = dip_per_inch * inch_per_em;
 
-    // @Note: Since fallback will be performed, finding base family isn't really necessary.
-    // But you may want to find if the base font-family exists in the system initially.
     const WCHAR *base_font_family_name = L"Fira Code";
     IDWriteFontCollection *font_collection = NULL;
     UINT32 family_index = 0;
@@ -112,6 +122,9 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
     win32_assume_hr(dwrite_factory->GetSystemFontCollection(&font_collection));
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
+
+    // @Note: Since fallback will be performed, finding base family isn't really necessary for our case.
+    // But you may want to find if the base font-family exists in the system initially.
     assert(family_exists);
 
     // @Note: 
@@ -144,10 +157,10 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     // That's why wcslen() returns 2 for smiley-face with /utf-8 flag set in MSVC.
     // If the flag isn't set, it'll return 5 which is equvalent to # of bytes.
 
-    //const WCHAR *text = L"😀a";
-    const WCHAR *text = L"! Hello->World ;";
-    //const WCHAR *text = L"안녕 세계 !";
-    //const WCHAR *text = L"مرحبا بالعالم"; // @Todo: Arabic: right-to-left
+    //WCHAR *text = L"😀";
+    WCHAR *text = L"! Hello->World ;";
+    //WCHAR *text = L"안녕 세계 !";
+    //WCHAR *text = L"مرحبا بالعالم"; // @Todo: Arabic: right-to-left
     UINT32 text_length = wcslen(text);
 
 
@@ -242,9 +255,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             {
                 BYTE *dst = bitmap_data + r*bitmap_pitch + c*4;
                 BYTE *src = bitmap_data_24 + r*bitmap_width*3 + c*3;
-                dst[0] = src[0];
-                dst[1] = src[1];
-                dst[2] = src[2];
+                *(UINT32 *)dst = *(UINT32 *)src;
                 dst[3] = 0xff;
             }
         }
@@ -434,6 +445,12 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     hr = d3d11.device->CreateBlendState(&blend_desc, &blend_state);
     assume(SUCCEEDED(hr));
 
+    FLOAT last_counter;
+    {
+        LARGE_INTEGER li = {};
+        QueryPerformanceCounter(&li);
+        last_counter = li.QuadPart;
+    }
 
     // ------------------------------
     // @Note: Main Loop
@@ -454,7 +471,29 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             }
         }
 
-        // Clear
+        // -----------------------
+        // @Note: Query new dt
+        FLOAT new_counter;
+        {
+            LARGE_INTEGER li = {};
+            QueryPerformanceCounter(&li);
+            new_counter = li.QuadPart;
+        }
+        FLOAT dt = (FLOAT)(new_counter - last_counter) * counter_frequency_inverse;
+        last_counter = new_counter;
+
+        FLOAT fps = 1.f / dt;
+
+        // ----------------------
+        // @Note: Set window title bar to performance status.
+        {
+            char txt[256];
+            snprintf(txt, sizeof(txt), "fps:%.2f (mspf:%.2fs)", fps, dt*1000.0f);
+            SetWindowTextA(hwnd, txt);
+        }
+
+        // -----------------------
+        // @Note: Draw
         FLOAT background_color[4] = { 0.5f, 0.2f, 0.2f, 1.0f };
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 
