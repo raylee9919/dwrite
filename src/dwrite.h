@@ -65,7 +65,7 @@ struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
 };
 
 
-typedef Dwrite_Text_Analysis_Sink_Result Dwrite_Text_Analysis_Sink_Result; 
+typedef struct Dwrite_Text_Analysis_Sink_Result Dwrite_Text_Analysis_Sink_Result; 
 struct Dwrite_Text_Analysis_Sink_Result 
 {
     UINT32 text_position;
@@ -75,7 +75,7 @@ struct Dwrite_Text_Analysis_Sink_Result
 
 // DirectWrite uses an IDWriteTextAnalysisSink to inform the caller of its segmentation results. The most important part are the
 // DWRITE_SCRIPT_ANALYSIS results which inform the remaining steps during glyph shaping what script ("language") is used in a piece of text.
-typedef Dwrite_Text_Analysis_Sink Dwrite_Text_Analysis_Sink;
+typedef struct Dwrite_Text_Analysis_Sink Dwrite_Text_Analysis_Sink;
 struct Dwrite_Text_Analysis_Sink final : IDWriteTextAnalysisSink 
 {
     Dwrite_Text_Analysis_Sink_Result *results;
@@ -134,7 +134,6 @@ typedef struct Dwrite_Map_Complexity_Result Dwrite_Map_Complexity_Result;
 struct Dwrite_Map_Complexity_Result
 {
     UINT16 *glyph_indices;
-    UINT32 index_count;
     UINT32 mapped_length = 0;
     BOOL is_simple = FALSE;
 };
@@ -143,7 +142,7 @@ typedef struct Dwrite_Glyph_Run Dwrite_Glyph_Run;
 struct Dwrite_Glyph_Run
 {
     DWRITE_GLYPH_RUN run;
-
+    IDWriteFontFace5    *font_face;
     UINT16              *indices;
     FLOAT               *advances;
     DWRITE_GLYPH_OFFSET *offsets;

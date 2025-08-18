@@ -3,14 +3,24 @@
 ## Unit
 - Pixel<br>
 - Dot<br>
-= Pixel (in current context)
-- Inch<br>
-1″ = 2.54cm
+  = Pixel (in current context)
 - Point<br>
-Designed by *Pierre Simon Fournier*.<br>
-1pt= 0.13837″ ≈ **0.72″**<br>
-<br>
-Thus, given the 72pt font size on 96DPI monitor, convert to pixel size.
+  Designed by *Pierre Simon Fournier*.<br>
+  1pt= 0.13837″ ≈ **0.72″**<br>
+
+- <span style="color: #ffa0a0">em</span><br>
+  In the typography world, the font designer designs in **em** coordinates.
+  It's an abstract coordinate system that can have whatever units.
+  It can have 0 to 100 or -10000 to 10000 or whatever. Then when you **use** the 
+  font, you select a point size. You say that 1em corresponds to how many point sizes.
+
+- <span style="color: #ffa0a0">pt</span><br>
+  72pt = 1"
+
+- <span style="color: #ffa0a0">dip (device independent pixel)</span><br>
+  96dip = 1"
+
+- <span style="color: #ffa0a0">px</span><br>
 
 
 ## DPI
