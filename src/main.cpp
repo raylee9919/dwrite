@@ -37,7 +37,6 @@
 #include "dwrite.h"
 #include "d3d11.h"
 #include "render.h"
-#include "shader.h"
 
 //--------------------
 // @Note: [.cpp]
@@ -45,6 +44,11 @@
 #include "dwrite.cpp"
 #include "d3d11.cpp"
 #include "render.cpp"
+
+//--------------------
+// @Note: Generated hlsl byte code.
+#include "shader_vs.h"
+#include "shader_ps.h"
 
 
 #define win32_assume_hr(hr) assume(SUCCEEDED(hr))
@@ -111,13 +115,14 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     }
 
 
+    // -------------------------------
     // @Note: Init DWrite
     IDWriteFactory3 *dwrite_factory = NULL;
 
     FLOAT const pt_per_em = 70.0f; // equivalent to font size.
-    FLOAT const inch_per_em = pt_per_em / 72.0f;
+                                   //FLOAT const inch_per_em = pt_per_em / 72.0f;
     FLOAT const dip_per_inch = 96.0f;
-    FLOAT const dip_per_em = dip_per_inch * inch_per_em;
+    //FLOAT const dip_per_em = dip_per_inch * inch_per_em;
 
     const WCHAR *base_font_family_name = L"Fira Code";
     IDWriteFontCollection *font_collection = NULL;
@@ -167,8 +172,10 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     Dwrite_Glyph_Run *glyph_runs = NULL;
     Dwrite_Outer_Hash_Table *outer_hashtable = NULL;
 
-    BYTE *bitmap_data = NULL;
-    UINT bitmap_width, bitmap_height, bitmap_pitch;
+    U32 atlas_width = 256;
+    U32 atlas_height = 256;
+    U32 atlas_pitch = (atlas_width << 2);
+    U8 *atlas_data = new U8[atlas_pitch*atlas_height];
 
 
 
@@ -177,66 +184,36 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     d3d11_init();
     d3d11_create_swapchain_and_framebuffer(hwnd);
 
-#if BUILD_DEBUG
-    UINT compile_flags = D3DCOMPILE_DEBUG|D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-    UINT compile_flags = 0;
-#endif
-
 
     // -----------------------------
     // @Note: Create Vertex Shader
-    ID3DBlob *vs_blob;
-    ID3DBlob *vs_error_blob;
-    ID3D11VertexShader *vertex_shader;
-
-    if (FAILED(D3DCompile(shader_code, strlen(shader_code)*sizeof(shader_code[0]), "VertexShaderUntitled",
-                          NULL/*Defines*/, NULL/*Includes*/, "vs_main",
-                          "vs_5_0", compile_flags, 0/*Compile Flags 2*/,
-                          &vs_blob, &vs_error_blob)))
+    ID3D11VertexShader *vertex_shader = NULL;
     {
-        OutputDebugStringA((const char *)vs_error_blob->GetBufferPointer());
-        assume(! "x");
+        win32_assume_hr(d3d11.device->CreateVertexShader(g_vs_main, sizeof(g_vs_main), NULL, &vertex_shader));
     }
 
-    if (FAILED(d3d11.device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), NULL, &vertex_shader)))
-    { assume(! "x"); }
 
 
     // -----------------------------
     // @Note: Create Pixel Shader
-    ID3DBlob *ps_blob;
-    ID3DBlob *ps_error_blob;
-    ID3D11PixelShader *pixel_shader;
-
-    if (FAILED(D3DCompile(shader_code, strlen(shader_code)*sizeof(shader_code[0]), "PixelShaderUntitled",
-                          NULL/*Defines*/, NULL/*Includes*/, "ps_main",
-                          "ps_5_0", compile_flags, 0/*Compile Flags 2*/,
-                          &ps_blob, &ps_error_blob)))
+    ID3D11PixelShader *pixel_shader = NULL;
     {
-        OutputDebugStringA((const char *)ps_error_blob->GetBufferPointer());
-        assume(! "x");
+        win32_assume_hr(d3d11.device->CreatePixelShader(g_ps_main, sizeof(g_ps_main), NULL, &pixel_shader));
     }
 
-    if (FAILED(d3d11.device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), NULL, &pixel_shader)))
-    { assume(! "x"); }
-
-    ps_blob->Release();
 
 
     // ----------------------------
     // @Note: Create Input Layout
-    ID3D11InputLayout* input_layout;
-    D3D11_INPUT_ELEMENT_DESC input_element_desc[] =
+    ID3D11InputLayout *input_layout = NULL;
     {
-        { "POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-        { "TEX", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-    };
-
-    if (FAILED(d3d11.device->CreateInputLayout(input_element_desc, array_count(input_element_desc), vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &input_layout)))
-    { assume(! "x"); }
-
-    vs_blob->Release();
+        D3D11_INPUT_ELEMENT_DESC desc[] =
+        {
+            { "POS", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEX", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+        };
+        win32_assume_hr(d3d11.device->CreateInputLayout(desc, array_count(desc), g_vs_main, sizeof(g_vs_main), &input_layout));
+    }
 
 
     //-------------------------------------
@@ -249,16 +226,13 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     UINT32 window_width  = (window_rect.right - window_rect.left);
     UINT32 window_height = (window_rect.bottom - window_rect.top);
 
-    FLOAT sw = 0.5f; //(FLOAT)bitmap_width / (FLOAT)window_width;
-    FLOAT sh = 0.5f; //(FLOAT)bitmap_height / (FLOAT)window_height;
-
-    // -----------------------------
+    //-------------------------------------
     // @Note: Create Vertex Buffer
     ID3D11Buffer *vertex_buffer = NULL;
     {
         D3D11_BUFFER_DESC desc = {};
         {
-            desc.ByteWidth       = sizeof(vertices[0])*MAX_VERTEX_COUNT;
+            desc.ByteWidth       = sizeof(renderer.vertices[0])*MAX_VERTEX_COUNT;
             desc.Usage           = D3D11_USAGE_DYNAMIC;
             desc.BindFlags       = D3D11_BIND_VERTEX_BUFFER;
             desc.CPUAccessFlags  = D3D11_CPU_ACCESS_WRITE;
@@ -267,7 +241,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         D3D11_SUBRESOURCE_DATA subresource = {};
         {
-            subresource.pSysMem          = vertices;
+            subresource.pSysMem          = renderer.vertices;
             subresource.SysMemPitch      = 0;
             subresource.SysMemSlicePitch = 0;
         }
@@ -284,7 +258,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         D3D11_BUFFER_DESC desc = {};
         {
             desc.Usage          = D3D11_USAGE_DYNAMIC;
-            desc.ByteWidth      = sizeof( indices[0] ) * MAX_INDEX_COUNT;
+            desc.ByteWidth      = sizeof( renderer.indices[0] ) * MAX_INDEX_COUNT;
             desc.BindFlags      = D3D11_BIND_INDEX_BUFFER;
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             desc.MiscFlags      = 0;
@@ -292,7 +266,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         D3D11_SUBRESOURCE_DATA subresource = {};
         {
-            subresource.pSysMem          = indices;
+            subresource.pSysMem          = renderer.indices;
             subresource.SysMemPitch      = 0;
             subresource.SysMemSlicePitch = 0;
         }
@@ -325,33 +299,35 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     // ------------------------------
     // @Note: Create Texture
 
-#if 0
-    ID3D11Texture2D *texture = NULL;
+#if 1
+    ID3D11Texture2D *atlas = NULL;
     {
         D3D11_TEXTURE2D_DESC texture_desc = {};
         {
-            texture_desc.Width              = bitmap_width;
-            texture_desc.Height             = bitmap_height;
+            texture_desc.Width              = atlas_width;
+            texture_desc.Height             = atlas_height;
             texture_desc.MipLevels          = 1;
             texture_desc.ArraySize          = 1;
             texture_desc.SampleDesc.Count   = 1;
-            texture_desc.Usage              = D3D11_USAGE_IMMUTABLE;
+            texture_desc.Usage              = D3D11_USAGE_DYNAMIC;
             texture_desc.BindFlags          = D3D11_BIND_SHADER_RESOURCE;
+            texture_desc.CPUAccessFlags     = D3D11_CPU_ACCESS_WRITE;
+            texture_desc.MiscFlags          = 0;
 
             texture_desc.Format = is_cleartype ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R8_UNORM; // @Todo: srgb?
         }
 
         D3D11_SUBRESOURCE_DATA texture_subresource_data = {};
         {
-            texture_subresource_data.pSysMem      = bitmap_data;
-            texture_subresource_data.SysMemPitch  = bitmap_pitch;
+            texture_subresource_data.pSysMem      = atlas_data;
+            texture_subresource_data.SysMemPitch  = atlas_pitch;
         }
 
-        d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &texture);
+        d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &atlas);
     }
 
     ID3D11ShaderResourceView *texture_view = NULL;
-    d3d11.device->CreateShaderResourceView(texture, NULL, &texture_view);
+    d3d11.device->CreateShaderResourceView(atlas, NULL, &texture_view);
 #endif
 
     // ------------------------------
@@ -379,12 +355,18 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     hr = d3d11.device->CreateBlendState(&blend_desc, &blend_state);
     assume(SUCCEEDED(hr));
 
-    FLOAT last_counter;
+    UINT64 last_counter;
     {
         LARGE_INTEGER li = {};
         QueryPerformanceCounter(&li);
         last_counter = li.QuadPart;
     }
+
+    WCHAR *text = new WCHAR[655356];
+    UINT32 text_length = 0;
+
+    text = L"! Hello->World ;";
+    text_length = (UINT32)wcslen(text);
 
     // ------------------------------
     // @Note: Main Loop
@@ -407,11 +389,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         // ---------------------------
         // @Note: Query new dt
-        DOUBLE new_counter;
+        UINT64 new_counter;
         {
             LARGE_INTEGER li = {};
             QueryPerformanceCounter(&li);
-            new_counter = (DOUBLE)li.QuadPart;
+            new_counter = li.QuadPart;
         }
         DOUBLE dt = (DOUBLE)(new_counter - last_counter) * counter_frequency_inverse;
         last_counter = new_counter;
@@ -419,42 +401,45 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         // ---------------------------
         // @Note: Update
-        vertex_count = 0;
-        index_count = 0;
+        renderer.vertex_count = 0;
+        renderer.index_count = 0;
 
-        // ---------------------------
+        SetWindowTextW(hwnd, text);
+
+        // -----------------------------
+        // @Note: Text container.
+        V2 container_min_pt     = V2{200,200};
+        F32 container_width_pt  = 200.0f;
+        F32 container_height_pt = 300.0f;
+
+        // dip
+        V2 container_min_px     = V2{px_from_pt(container_min_pt.x), px_from_pt(container_min_pt.y)};
+        F32 container_width_px  = px_from_pt(container_width_pt);
+        F32 container_height_px = px_from_pt(container_height_pt);
+
+
+        // -------------------------------------------------
+        // @Todo: (container_dimension_pt, basleine _pt, string) -> (atlas, uv per glyph, series_of_pt_coordinate_per_glyph)
+        // 1. Set rules of coordinate system. (O)
+        // 2. Tackle series_of_pt_coordinate_per_glyph first.
+
+
+        // -------------------------------
         // @Note: Parse text with DWrite.
-
-        WCHAR *text = L"! Hello->World ;";
-
-        UINT32 text_length = wcslen(text);
 
         if (glyph_runs)
         { arrfree(glyph_runs); }
-        Dwrite_Glyph_Run *glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, 
-                                                                 base_font_family_name, pt_per_em, text, text_length);
-
-        if (bitmap_data)
-        { delete [] bitmap_data; }
-
-        F32 container_width_pt  = 100.0f;
-        F32 container_height_pt = 100.0f;
-
-        // dip
-        F32 container_width_px  = container_width_pt  / 72.0f * 96.0f;
-        F32 container_height_px = container_height_pt / 72.0f * 96.0f;
-
-
-        //render_quad_px(v2(50, 50), v2(50 + container_width_px, 50 + container_height_px));
-        render_quad_px(v2(-0.5f, -0.5f), v2(0.5f, 0.5f));
-        
+        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, 
+                                               base_font_family_name, pt_per_em, text, text_length);
 
 
 
-        UINT32 run_count = arrlenu(glyph_runs);
-        for (UINT32 i = 0; i < run_count; ++i)
+        V2 glyph_origin = V2{0,0};
+        UINT32 run_count = static_cast<UINT32>(arrlenu(glyph_runs));
+
+        for (UINT32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
-            Dwrite_Glyph_Run glyph_run = glyph_runs[i];
+            Dwrite_Glyph_Run glyph_run = glyph_runs[run_idx];
             DWRITE_GLYPH_RUN run = glyph_run.run;
 
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
@@ -487,8 +472,28 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                                                         0.0f, // baselineOriginY
                                                         &analysis);
 
-            const DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
 
+            for (U32 i = 0; i < run.glyphCount; ++i)
+            {
+                F32 advance = run.glyphAdvances[i];
+                F32 xend = glyph_origin.x + advance;
+                if (xend >= container_width_pt)
+                {
+                    glyph_origin.x = 0.0f;
+                    glyph_origin.y += glyph_run.vertical_advance_in_pt; // @Todo: Subtract, actually.
+                }
+
+                const V2 tmp_dim = V2{30, 70};
+                render_quad_px_min_max(glyph_origin, glyph_origin + tmp_dim);
+
+
+
+
+
+                glyph_origin.x += advance;
+            }
+
+#if 0
             // @Note: As long as you don't Release() font face, Windows will
             // internally return the same address for the same font face.
             IDWriteFontFace5 *font_face = glyph_run.font_face; // Outer-key.
@@ -496,7 +501,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             {
                 Dwrite_Inner_Hash_Table **inner_hash_table = hmget(outer_hashtable, font_face);
 
-                for (int i = 0; i < run.glyphCount; ++i)
+                for (UINT32 i = 0; i < run.glyphCount; ++i)
                 {
                     UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
 
@@ -517,14 +522,20 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
                 hmput(outer_hashtable, font_face, inner_hash_table);
 
-                for (int i = 0; i < run.glyphCount; ++i)
+                for (UINT32 i = 0; i < run.glyphCount; ++i)
                 {
                     UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
                     hmput(*inner_hash_table, glyph_index, 1219); // @Todo: UV value
                 }
             }
+#endif
 
 
+
+#if 1
+            // ------------------------
+            // @Note: Create texture.
+            const DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
 
             RECT bounds = {};
             hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
@@ -535,9 +546,9 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                 assume(! "x");
             }
 
-            bitmap_width = bounds.right - bounds.left;
-            bitmap_height = bounds.bottom - bounds.top;
-            bitmap_pitch = bitmap_width;
+            U32 bitmap_width = bounds.right - bounds.left;
+            U32 bitmap_height = bounds.bottom - bounds.top;
+            U32 bitmap_pitch = bitmap_width;
 
             if (bitmap_width == 0 || bitmap_height == 0)
             {
@@ -545,7 +556,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                 assume(! "x");
             }
 
-            UINT64 bitmap_size = bitmap_width * bitmap_height;
+            UINT32 bitmap_size = bitmap_width * bitmap_height;
             if (is_cleartype)
             {
                 bitmap_size <<= 2; 
@@ -553,7 +564,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             }
 
             BYTE *bitmap_data_24 = new BYTE[bitmap_size];
-            bitmap_data = new BYTE[bitmap_size];
 
             win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_24, bitmap_size));
 
@@ -563,7 +573,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             {
                 for (UINT32 c = 0; c < bitmap_width; ++c)
                 {
-                    BYTE *dst = bitmap_data + r*bitmap_pitch + c*4;
+                    BYTE *dst = atlas_data + r*bitmap_pitch + c*4;
                     BYTE *src = bitmap_data_24 + r*bitmap_width*3 + c*3;
                     *(UINT32 *)dst = *(UINT32 *)src;
                     dst[3] = 0xff;
@@ -574,19 +584,28 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             // -------------------------
             // @Note: Cleanup
             delete [] bitmap_data_24;
+#endif
 
             assert(analysis);
             analysis->Release();
         }
 
 
+        // -----------------------
+        // @Note: D3D11 Pass
+
+        for (U32 i = 0; i < renderer.vertex_count; ++i)
+        {
+            renderer.vertices[i].pos.x = (renderer.vertices[i].pos.x * 2.0f / window_width) - 1.0f;
+            renderer.vertices[i].pos.y = (renderer.vertices[i].pos.y * 2.0f / window_height) - 1.0f;
+        }
 
         // ---------------------------
         // @Note: Update vertex buffer.
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
             d3d11.device_ctx->Map(vertex_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(vertices, mapped_subresource.pData, sizeof(vertices[0])*vertex_count);
+            memory_copy(renderer.vertices, mapped_subresource.pData, sizeof(renderer.vertices[0])*renderer.vertex_count);
             d3d11.device_ctx->Unmap(vertex_buffer, 0);
         }
 
@@ -595,15 +614,23 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
             d3d11.device_ctx->Map(index_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(indices, mapped_subresource.pData, sizeof(indices[0])*index_count);
+            memory_copy(renderer.indices, mapped_subresource.pData, sizeof(renderer.indices[0])*renderer.index_count);
             d3d11.device_ctx->Unmap(index_buffer, 0);
+        }
+
+        // ---------------------------
+        // @Note: Update atlas.
+        {
+            D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
+            d3d11.device_ctx->Map(atlas, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
+            memory_copy(atlas_data, mapped_subresource.pData, sizeof(atlas_data[0])*atlas_pitch*atlas_height);
+            d3d11.device_ctx->Unmap(atlas, 0);
         }
 
 
 
-        // -----------------------
-        // @Note: Draw
-        FLOAT background_color[4] = { 0.5f, 0.2f, 0.2f, 1.0f };
+        
+        FLOAT background_color[4] = {0.1f, 0.1f, 0.1f,1.0f};
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 
         D3D11_VIEWPORT viewport = {};
@@ -618,7 +645,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         d3d11.device_ctx->RSSetViewports(1, &viewport);
 
         {
-            UINT stride = sizeof(vertices[0]);
+            UINT stride = sizeof(renderer.vertices[0]);
             UINT offset = 0;
             d3d11.device_ctx->IASetVertexBuffers(0, 1, &vertex_buffer, &stride, &offset);
         }
@@ -629,7 +656,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         d3d11.device_ctx->VSSetShader(vertex_shader, NULL, 0);
 
         d3d11.device_ctx->PSSetShader(pixel_shader, NULL, 0);
-#if 0
+#if 1
         d3d11.device_ctx->PSSetShaderResources(0, 1, &texture_view);
         d3d11.device_ctx->PSSetSamplers(0, 1, &sampler_state);
 #endif
@@ -637,7 +664,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
         d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
-        d3d11.device_ctx->DrawIndexed(arrlenu(indices), 0, 0);
+
+        d3d11.device_ctx->DrawIndexed(renderer.index_count, 0, 0);
 
         d3d11.swapchain->Present(1, 0);
     }

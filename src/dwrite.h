@@ -142,6 +142,7 @@ struct Dwrite_Glyph_Run
 {
     DWRITE_GLYPH_RUN    run;
     IDWriteFontFace5    *font_face;
+    FLOAT               vertical_advance_in_pt;
     UINT16              *indices;
     FLOAT               *advances;
     DWRITE_GLYPH_OFFSET *offsets;

@@ -9,5 +9,8 @@ struct V2
 };
 
 static V2 v2(F32 x, F32 y);
+static V2 operator + (V2 a, V2 b);
+
+#define px_from_pt(px) (px * 1.333333f)
 
 #endif // LSW_MATH_H

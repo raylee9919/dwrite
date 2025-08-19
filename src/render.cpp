@@ -1,20 +1,31 @@
 // Copyright (c) 2025 Seong Woo Lee. All rights reserved.
 
 static void
-render_quad_px(V2 min, V2 max)
+render_quad_px_min_max(V2 min, V2 max)
 {
-    assume(index_count + 6 <= MAX_INDEX_COUNT);
-    assume(vertex_count + 4 <= MAX_VERTEX_COUNT);
+    Renderer &r = renderer;
 
-    vertices[vertex_count++].pos = V2{min.x, max.y};
-    vertices[vertex_count++].pos = V2{max.x, max.y};
-    vertices[vertex_count++].pos = V2{max.x, min.y};
-    vertices[vertex_count++].pos = V2{min.x, min.y};
+    assume(r.index_count + 6 <= MAX_INDEX_COUNT);
+    assume(r.vertex_count + 4 <= MAX_VERTEX_COUNT);
 
-    indices[index_count++] = 0;
-    indices[index_count++] = 1;
-    indices[index_count++] = 2;
-    indices[index_count++] = 0;
-    indices[index_count++] = 2;
-    indices[index_count++] = 3;
+    U32 start_index = r.vertex_count;
+
+    r.vertices[r.vertex_count].uv    = V2{0,1};
+    r.vertices[r.vertex_count++].pos = V2{min.x, min.y};
+
+    r.vertices[r.vertex_count].uv    = V2{0,0};
+    r.vertices[r.vertex_count++].pos = V2{min.x, max.y};
+
+    r.vertices[r.vertex_count].uv    = V2{1,0};
+    r.vertices[r.vertex_count++].pos = V2{max.x, max.y};
+
+    r.vertices[r.vertex_count].uv    = V2{1,1};
+    r.vertices[r.vertex_count++].pos = V2{max.x, min.y};
+
+    r.indices[r.index_count++] = start_index + 0;
+    r.indices[r.index_count++] = start_index + 1;
+    r.indices[r.index_count++] = start_index + 2;
+    r.indices[r.index_count++] = start_index + 0;
+    r.indices[r.index_count++] = start_index + 2;
+    r.indices[r.index_count++] = start_index + 3;
 }

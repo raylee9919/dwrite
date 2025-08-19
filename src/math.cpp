@@ -8,3 +8,12 @@ v2(F32 x, F32 y)
     result.y = y;
     return result;
 }
+
+static V2
+operator + (V2 a, V2 b)
+{
+    V2 result = {};
+    result.x = a.x + b.x;
+    result.y = a.y + b.y;
+    return result;
+}
