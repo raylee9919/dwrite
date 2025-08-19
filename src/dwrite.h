@@ -147,5 +147,19 @@ struct Dwrite_Glyph_Run
     DWRITE_GLYPH_OFFSET *offsets;
 };
 
+typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
+struct Dwrite_Inner_Hash_Table
+{
+    UINT16 key;
+    UINT16 value;
+};
+
+typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
+struct Dwrite_Outer_Hash_Table
+{
+    IDWriteFontFace5 *key;
+    Dwrite_Inner_Hash_Table **value;
+};
+
 
 #endif // LSW_DWRITE_H

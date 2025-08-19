@@ -2,11 +2,14 @@
 #ifndef SWL_BASIC_H
 #define SWL_BASIC_H
 
-// @NOTE: Third-Party Includes
+// @Note: Third-Party Includes
 #include <stdint.h>
 #include <math.h>
 
-// @NOTE: Base Types
+// @Note: Base Types
+#define global static
+#define local_persist static
+#define function static
 typedef int8_t   S8;
 typedef int16_t  S16;
 typedef int32_t  S32;
@@ -24,7 +27,7 @@ typedef double   F64;
 typedef struct { U64 u64[2]; } U128;
 
 
-// NOTE: Macro-Functions
+// Note: Macro-Functions
 #define assert(exp) do { if (!(exp)) __debugbreak(); } while(0)
 #define assume(exp) do { if (!(exp)) __debugbreak(); } while(0)
 #define array_count(arr) (sizeof(arr) / sizeof(arr[0]))

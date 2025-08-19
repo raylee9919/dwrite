@@ -30,23 +30,28 @@
 //--------------------
 // @Note: [.h]
 #include "basic.h"
+#include "math.h"
 #define STB_DS_IMPLEMENTATION
 #define STBDS_ASSERT
 #include "third_party/stb_ds.h"
 #include "dwrite.h"
 #include "d3d11.h"
+#include "render.h"
 #include "shader.h"
 
 //--------------------
 // @Note: [.cpp]
+#include "math.cpp"
 #include "dwrite.cpp"
 #include "d3d11.cpp"
+#include "render.cpp"
 
 
 #define win32_assume_hr(hr) assume(SUCCEEDED(hr))
 
 
 static BOOL g_running = TRUE;
+
 
 static LRESULT CALLBACK
 win32_window_procedure(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -98,11 +103,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // ------------------------------
     // @Note: Query QPC frequency.
-    FLOAT counter_frequency_inverse;
+    DOUBLE counter_frequency_inverse;
     {
         LARGE_INTEGER li = {};
         QueryPerformanceFrequency(&li);
-        counter_frequency_inverse = 1.f / (FLOAT)li.QuadPart;
+        counter_frequency_inverse = (1.0 / (DOUBLE)li.QuadPart);
     }
 
 
@@ -152,116 +157,19 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
 
 
-    // @Note:
-    // Smiley-face emoji's codepoint(U+1F600) is bigger than 16-bits which is unit of UTF-16 and wchar.
-    // That's why wcslen() returns 2 for smiley-face with /utf-8 flag set in MSVC.
-    // If the flag isn't set, it'll return 5 which is equvalent to # of bytes.
+    // -----------------------------
+    // @Note: Prepare DWrite
 
-    //WCHAR *text = L"😀";
-    WCHAR *text = L"! Hello->World ;";
-    //WCHAR *text = L"안녕 세계 !";
-    //WCHAR *text = L"مرحبا بالعالم"; // @Todo: Arabic: right-to-left
-    UINT32 text_length = wcslen(text);
-
-
-    // Retrieve glyph runs.
-    Dwrite_Glyph_Run *glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, 
-                                                             base_font_family_name, pt_per_em, text, text_length);
-
-
-    // Create rendering parameters.
     IDWriteRenderingParams *rendering_params = NULL;
     win32_assume_hr(dwrite_factory->CreateRenderingParams(&rendering_params));
+
+    BOOL is_cleartype = TRUE;
+    Dwrite_Glyph_Run *glyph_runs = NULL;
+    Dwrite_Outer_Hash_Table *outer_hashtable = NULL;
 
     BYTE *bitmap_data = NULL;
     UINT bitmap_width, bitmap_height, bitmap_pitch;
 
-    BOOL is_cleartype = TRUE;
-
-    UINT32 run_count = arrlenu(glyph_runs);
-    for (UINT32 i = 0; i < run_count; ++i)
-    {
-        Dwrite_Glyph_Run glyph_run = glyph_runs[i];
-        DWRITE_GLYPH_RUN run = glyph_run.run;
-
-        DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
-        DWRITE_MEASURING_MODE measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
-        DWRITE_GRID_FIT_MODE grid_fit_mode = DWRITE_GRID_FIT_MODE_DEFAULT;
-
-        win32_assume_hr(glyph_run.font_face->GetRecommendedRenderingMode(run.fontEmSize,
-                                                                         dip_per_inch, dip_per_inch,
-                                                                         NULL, // transform
-                                                                         run.isSideways,
-                                                                         DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
-                                                                         measuring_mode,
-                                                                         rendering_params,
-                                                                         &rendering_mode,
-                                                                         &grid_fit_mode));
-
-        // @Note: CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
-        // We won't bother big glyphs. (many hundreds of pt)
-        if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
-        { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
-
-        IDWriteGlyphRunAnalysis *analysis = NULL;
-        hr = dwrite_factory->CreateGlyphRunAnalysis(&run,
-                                                    NULL, // transform
-                                                    rendering_mode,
-                                                    measuring_mode,
-                                                    grid_fit_mode,
-                                                    is_cleartype ? DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE : DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-                                                    0.0f, // baselineOriginX
-                                                    0.0f, // baselineOriginY
-                                                    &analysis);
-
-        const DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
-
-        RECT bounds = {};
-        hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
-        if (FAILED(hr))
-        {
-            // @Todo: The font doesn't support DWRITE_TEXTURE_CLEARTYPE_3x1.
-            // Retry with DWRITE_TEXTURE_ALIASED_1x1.
-            assume(! "x");
-        }
-
-        bitmap_width = bounds.right - bounds.left;
-        bitmap_height = bounds.bottom - bounds.top;
-        bitmap_pitch = bitmap_width;
-
-        if (bitmap_width == 0 || bitmap_height == 0)
-        {
-            // @Todo: Skip bitmap generation if empty.
-            assume(! "x");
-        }
-
-        UINT64 bitmap_size = bitmap_width * bitmap_height;
-        if (is_cleartype)
-        {
-            bitmap_size <<= 2; 
-            bitmap_pitch <<= 2;
-        }
-
-        BYTE *bitmap_data_24 = new BYTE[bitmap_size];
-        bitmap_data = new BYTE[bitmap_size];
-
-        win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_24, bitmap_size));
-
-        // ------------------
-        // @Note: RGB to RGBA
-        for (UINT32 r = 0; r < bitmap_height; ++r)
-        {
-            for (UINT32 c = 0; c < bitmap_width; ++c)
-            {
-                BYTE *dst = bitmap_data + r*bitmap_pitch + c*4;
-                BYTE *src = bitmap_data_24 + r*bitmap_width*3 + c*3;
-                *(UINT32 *)dst = *(UINT32 *)src;
-                dst[3] = 0xff;
-            }
-        }
-
-        delete [] bitmap_data_24;
-    }
 
 
     // -----------------------------
@@ -340,37 +248,58 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     GetClientRect(hwnd, &window_rect);
     UINT32 window_width  = (window_rect.right - window_rect.left);
     UINT32 window_height = (window_rect.bottom - window_rect.top);
-    
-    FLOAT sw = (FLOAT)bitmap_width / (FLOAT)window_width;
-    FLOAT sh = (FLOAT)bitmap_height / (FLOAT)window_height;
+
+    FLOAT sw = 0.5f; //(FLOAT)bitmap_width / (FLOAT)window_width;
+    FLOAT sh = 0.5f; //(FLOAT)bitmap_height / (FLOAT)window_height;
 
     // -----------------------------
     // @Note: Create Vertex Buffer
     ID3D11Buffer *vertex_buffer = NULL;
-    UINT32 vertex_count, stride, offset;
-    FLOAT vertex_data[] = { // x, y, u, v
-        -sw, +sh,  0.f, 0.f,
-        +sw, -sh,  1.f, 1.f,
-        -sw, -sh,  0.f, 1.f,
-        -sw, +sh,  0.f, 0.f,
-        +sw, +sh,  1.f, 0.f,
-        +sw, -sh,  1.f, 1.f
-    };
-    stride       = 4 * sizeof(FLOAT);
-    vertex_count = sizeof(vertex_data) / stride;
-    offset       = 0;
-
-    D3D11_BUFFER_DESC vertex_buffer_desc = {};
     {
-        vertex_buffer_desc.ByteWidth = sizeof(vertex_data);
-        vertex_buffer_desc.Usage     = D3D11_USAGE_IMMUTABLE;
-        vertex_buffer_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        D3D11_BUFFER_DESC desc = {};
+        {
+            desc.ByteWidth       = sizeof(vertices[0])*MAX_VERTEX_COUNT;
+            desc.Usage           = D3D11_USAGE_DYNAMIC;
+            desc.BindFlags       = D3D11_BIND_VERTEX_BUFFER;
+            desc.CPUAccessFlags  = D3D11_CPU_ACCESS_WRITE;
+            desc.MiscFlags       = 0;
+        }
+
+        D3D11_SUBRESOURCE_DATA subresource = {};
+        {
+            subresource.pSysMem          = vertices;
+            subresource.SysMemPitch      = 0;
+            subresource.SysMemSlicePitch = 0;
+        }
+
+        win32_assume_hr(d3d11.device->CreateBuffer(&desc, &subresource, &vertex_buffer));
     }
 
-    D3D11_SUBRESOURCE_DATA vertex_subresource_data = { vertex_data };
 
-    if (FAILED(d3d11.device->CreateBuffer(&vertex_buffer_desc, &vertex_subresource_data, &vertex_buffer)))
-    { assert(0); } // Todo: Error-handling
+
+    // -----------------------------
+    // @Note: Create Index Buffer
+    ID3D11Buffer *index_buffer = NULL;
+    {
+        D3D11_BUFFER_DESC desc = {};
+        {
+            desc.Usage          = D3D11_USAGE_DYNAMIC;
+            desc.ByteWidth      = sizeof( indices[0] ) * MAX_INDEX_COUNT;
+            desc.BindFlags      = D3D11_BIND_INDEX_BUFFER;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            desc.MiscFlags      = 0;
+        }
+
+        D3D11_SUBRESOURCE_DATA subresource = {};
+        {
+            subresource.pSysMem          = indices;
+            subresource.SysMemPitch      = 0;
+            subresource.SysMemSlicePitch = 0;
+        }
+
+        win32_assume_hr(d3d11.device->CreateBuffer(&desc, &subresource, &index_buffer));
+    }
+
 
 
     // ------------------------------
@@ -395,30 +324,35 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // ------------------------------
     // @Note: Create Texture
+
+#if 0
     ID3D11Texture2D *texture = NULL;
+    {
+        D3D11_TEXTURE2D_DESC texture_desc = {};
+        {
+            texture_desc.Width              = bitmap_width;
+            texture_desc.Height             = bitmap_height;
+            texture_desc.MipLevels          = 1;
+            texture_desc.ArraySize          = 1;
+            texture_desc.SampleDesc.Count   = 1;
+            texture_desc.Usage              = D3D11_USAGE_IMMUTABLE;
+            texture_desc.BindFlags          = D3D11_BIND_SHADER_RESOURCE;
+
+            texture_desc.Format = is_cleartype ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R8_UNORM; // @Todo: srgb?
+        }
+
+        D3D11_SUBRESOURCE_DATA texture_subresource_data = {};
+        {
+            texture_subresource_data.pSysMem      = bitmap_data;
+            texture_subresource_data.SysMemPitch  = bitmap_pitch;
+        }
+
+        d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &texture);
+    }
+
     ID3D11ShaderResourceView *texture_view = NULL;
-
-    D3D11_TEXTURE2D_DESC texture_desc = {};
-    {
-        texture_desc.Width              = bitmap_width;
-        texture_desc.Height             = bitmap_height;
-        texture_desc.MipLevels          = 1;
-        texture_desc.ArraySize          = 1;
-        texture_desc.SampleDesc.Count   = 1;
-        texture_desc.Usage              = D3D11_USAGE_IMMUTABLE;
-        texture_desc.BindFlags          = D3D11_BIND_SHADER_RESOURCE;
-
-        texture_desc.Format = is_cleartype ? DXGI_FORMAT_R8G8B8A8_UNORM : DXGI_FORMAT_R8_UNORM; // @Todo: srgb?
-    }
-
-    D3D11_SUBRESOURCE_DATA texture_subresource_data = {};
-    {
-        texture_subresource_data.pSysMem      = bitmap_data;
-        texture_subresource_data.SysMemPitch  = bitmap_pitch;
-    }
-
-    d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &texture);
     d3d11.device->CreateShaderResourceView(texture, NULL, &texture_view);
+#endif
 
     // ------------------------------
     // @Note: Create Blend State
@@ -471,26 +405,201 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             }
         }
 
-        // -----------------------
+        // ---------------------------
         // @Note: Query new dt
-        FLOAT new_counter;
+        DOUBLE new_counter;
         {
             LARGE_INTEGER li = {};
             QueryPerformanceCounter(&li);
-            new_counter = li.QuadPart;
+            new_counter = (DOUBLE)li.QuadPart;
         }
-        FLOAT dt = (FLOAT)(new_counter - last_counter) * counter_frequency_inverse;
+        DOUBLE dt = (DOUBLE)(new_counter - last_counter) * counter_frequency_inverse;
         last_counter = new_counter;
 
-        FLOAT fps = 1.f / dt;
 
-        // ----------------------
-        // @Note: Set window title bar to performance status.
+        // ---------------------------
+        // @Note: Update
+        vertex_count = 0;
+        index_count = 0;
+
+        // ---------------------------
+        // @Note: Parse text with DWrite.
+
+        WCHAR *text = L"! Hello->World ;";
+
+        UINT32 text_length = wcslen(text);
+
+        if (glyph_runs)
+        { arrfree(glyph_runs); }
+        Dwrite_Glyph_Run *glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, 
+                                                                 base_font_family_name, pt_per_em, text, text_length);
+
+        if (bitmap_data)
+        { delete [] bitmap_data; }
+
+        F32 container_width_pt  = 100.0f;
+        F32 container_height_pt = 100.0f;
+
+        // dip
+        F32 container_width_px  = container_width_pt  / 72.0f * 96.0f;
+        F32 container_height_px = container_height_pt / 72.0f * 96.0f;
+
+
+        //render_quad_px(v2(50, 50), v2(50 + container_width_px, 50 + container_height_px));
+        render_quad_px(v2(-0.5f, -0.5f), v2(0.5f, 0.5f));
+        
+
+
+
+        UINT32 run_count = arrlenu(glyph_runs);
+        for (UINT32 i = 0; i < run_count; ++i)
         {
-            char txt[256];
-            snprintf(txt, sizeof(txt), "fps:%.2f (mspf:%.2fs)", fps, dt*1000.0f);
-            SetWindowTextA(hwnd, txt);
+            Dwrite_Glyph_Run glyph_run = glyph_runs[i];
+            DWRITE_GLYPH_RUN run = glyph_run.run;
+
+            DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
+            DWRITE_MEASURING_MODE measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
+            DWRITE_GRID_FIT_MODE grid_fit_mode = DWRITE_GRID_FIT_MODE_DEFAULT;
+
+            win32_assume_hr(glyph_run.font_face->GetRecommendedRenderingMode(run.fontEmSize,
+                                                                             dip_per_inch, dip_per_inch,
+                                                                             NULL, // transform
+                                                                             run.isSideways,
+                                                                             DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
+                                                                             measuring_mode,
+                                                                             rendering_params,
+                                                                             &rendering_mode,
+                                                                             &grid_fit_mode));
+
+            // @Note: CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
+            // We won't bother big glyphs. (many hundreds of pt)
+            if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
+            { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
+
+            IDWriteGlyphRunAnalysis *analysis = NULL;
+            hr = dwrite_factory->CreateGlyphRunAnalysis(&run,
+                                                        NULL, // transform
+                                                        rendering_mode,
+                                                        measuring_mode,
+                                                        grid_fit_mode,
+                                                        is_cleartype ? DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE : DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                                                        0.0f, // baselineOriginX
+                                                        0.0f, // baselineOriginY
+                                                        &analysis);
+
+            const DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
+
+            // @Note: As long as you don't Release() font face, Windows will
+            // internally return the same address for the same font face.
+            IDWriteFontFace5 *font_face = glyph_run.font_face; // Outer-key.
+            if (hmgeti(outer_hashtable, font_face) != -1)
+            {
+                Dwrite_Inner_Hash_Table **inner_hash_table = hmget(outer_hashtable, font_face);
+
+                for (int i = 0; i < run.glyphCount; ++i)
+                {
+                    UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
+
+                    if (hmgeti(*inner_hash_table, font_face) != -1)
+                    {
+                        // @Todo: return uv
+                    }
+                    else
+                    {
+                        hmput(*inner_hash_table, glyph_index, 1219); // @Todo: UV value
+                    }
+                }
+            }
+            else
+            {
+                Dwrite_Inner_Hash_Table **inner_hash_table = new Dwrite_Inner_Hash_Table *;
+                *inner_hash_table = NULL;
+
+                hmput(outer_hashtable, font_face, inner_hash_table);
+
+                for (int i = 0; i < run.glyphCount; ++i)
+                {
+                    UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
+                    hmput(*inner_hash_table, glyph_index, 1219); // @Todo: UV value
+                }
+            }
+
+
+
+            RECT bounds = {};
+            hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
+            if (FAILED(hr))
+            {
+                // @Todo: The font doesn't support DWRITE_TEXTURE_CLEARTYPE_3x1.
+                // Retry with DWRITE_TEXTURE_ALIASED_1x1.
+                assume(! "x");
+            }
+
+            bitmap_width = bounds.right - bounds.left;
+            bitmap_height = bounds.bottom - bounds.top;
+            bitmap_pitch = bitmap_width;
+
+            if (bitmap_width == 0 || bitmap_height == 0)
+            {
+                // @Todo: Skip bitmap generation if empty.
+                assume(! "x");
+            }
+
+            UINT64 bitmap_size = bitmap_width * bitmap_height;
+            if (is_cleartype)
+            {
+                bitmap_size <<= 2; 
+                bitmap_pitch <<= 2;
+            }
+
+            BYTE *bitmap_data_24 = new BYTE[bitmap_size];
+            bitmap_data = new BYTE[bitmap_size];
+
+            win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_24, bitmap_size));
+
+            // -------------------------
+            // @Note: RGB to RGBA
+            for (UINT32 r = 0; r < bitmap_height; ++r)
+            {
+                for (UINT32 c = 0; c < bitmap_width; ++c)
+                {
+                    BYTE *dst = bitmap_data + r*bitmap_pitch + c*4;
+                    BYTE *src = bitmap_data_24 + r*bitmap_width*3 + c*3;
+                    *(UINT32 *)dst = *(UINT32 *)src;
+                    dst[3] = 0xff;
+                }
+            }
+
+
+            // -------------------------
+            // @Note: Cleanup
+            delete [] bitmap_data_24;
+
+            assert(analysis);
+            analysis->Release();
         }
+
+
+
+        // ---------------------------
+        // @Note: Update vertex buffer.
+        {
+            D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
+            d3d11.device_ctx->Map(vertex_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
+            memory_copy(vertices, mapped_subresource.pData, sizeof(vertices[0])*vertex_count);
+            d3d11.device_ctx->Unmap(vertex_buffer, 0);
+        }
+
+        // ---------------------------
+        // @Note: Update index buffer.
+        {
+            D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
+            d3d11.device_ctx->Map(index_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
+            memory_copy(indices, mapped_subresource.pData, sizeof(indices[0])*index_count);
+            d3d11.device_ctx->Unmap(index_buffer, 0);
+        }
+
+
 
         // -----------------------
         // @Note: Draw
@@ -508,21 +617,27 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         }
         d3d11.device_ctx->RSSetViewports(1, &viewport);
 
-        d3d11.device_ctx->IASetVertexBuffers(0, 1, &vertex_buffer, &stride, &offset);
+        {
+            UINT stride = sizeof(vertices[0]);
+            UINT offset = 0;
+            d3d11.device_ctx->IASetVertexBuffers(0, 1, &vertex_buffer, &stride, &offset);
+        }
+        d3d11.device_ctx->IASetIndexBuffer(index_buffer, DXGI_FORMAT_R32_UINT, 0/*offset*/);
         d3d11.device_ctx->IASetInputLayout(input_layout);
         d3d11.device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         d3d11.device_ctx->VSSetShader(vertex_shader, NULL, 0);
 
         d3d11.device_ctx->PSSetShader(pixel_shader, NULL, 0);
+#if 0
         d3d11.device_ctx->PSSetShaderResources(0, 1, &texture_view);
         d3d11.device_ctx->PSSetSamplers(0, 1, &sampler_state);
-
+#endif
 
         d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
         d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
-        d3d11.device_ctx->Draw(vertex_count, 0);
+        d3d11.device_ctx->DrawIndexed(arrlenu(indices), 0, 0);
 
         d3d11.swapchain->Present(1, 0);
     }

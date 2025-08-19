@@ -27,7 +27,8 @@ VS_Output vs_main(VS_Input input)
 
 float4 ps_main(VS_Output input) : SV_Target
 {
-    float4 result = mytexture.Sample(mysampler, input.uv);
+    //float4 result = mytexture.Sample(mysampler, input.uv);
+    float4 result = float4(0.2,0.5,0.2,1);
     return result;
 }
 
