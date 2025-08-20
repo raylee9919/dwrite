@@ -48,8 +48,11 @@ struct Renderer
     U32 indices[MAX_INDEX_COUNT];
 };
 
-global Renderer renderer;
+static Renderer renderer;
 
-global void render_quad_px_min_max(V2 min, V2 max);
+
+static void render_quad_px_min_max(V2 min, V2 max);
+static void render_glyph_px_origin(V2 origin_px);
+
 
 #endif // LSW_RENDER_H

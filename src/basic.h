@@ -34,6 +34,7 @@ typedef struct { U64 u64[2]; } U128;
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define memory_copy(src, dst, bytes) memcpy((void *)dst, (void *)src, bytes)
+#define quick_sort(ptr, count, each_size, comp) qsort(ptr, count, each_size, comp)
 
 
 #endif // SWL_BASIC_H

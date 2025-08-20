@@ -23,6 +23,7 @@
 #include <dwrite_3.h> 
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
+#include <d2d1_3.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,23 +115,61 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         counter_frequency_inverse = (1.0 / (DOUBLE)li.QuadPart);
     }
 
+    // -----------------------------
+    // @Note: D3D
+    d3d11_init();
+    d3d11_create_swapchain_and_framebuffer(hwnd);
+
+
+
+    // -----------------------------
+    // @Note: D2D
+    ID2D1Factory5 *d2d_factory = NULL;
+    {
+        D2D1_FACTORY_OPTIONS options = {};
+        options.debugLevel = D2D1_DEBUG_LEVEL_WARNING;
+        win32_assume_hr(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, options, &d2d_factory));
+    }
+
+    ID2D1Device4 *d2d_device = NULL;
+    win32_assume_hr(d2d_factory->CreateDevice(d3d11.dxgi_device, &d2d_device));
+
+    ID2D1DeviceContext4 *d2d_device_ctx = NULL;
+    {
+        D2D1_DEVICE_CONTEXT_OPTIONS options = {};
+        win32_assume_hr(d2d_device->CreateDeviceContext(options, &d2d_device_ctx));
+    }
+
+    ID3D11Texture2D *d2d_backbuffer = NULL;
+    assert(d3d11.swapchain);
+    d3d11.swapchain->GetBuffer(0, __uuidof(d2d_backbuffer), (void **)&d2d_backbuffer);
+
+    IDXGISurface *dxgi_surface = NULL;
+    win32_assume_hr(d2d_backbuffer->QueryInterface(__uuidof(dxgi_surface), (void **)&dxgi_surface));
+
+
+
+
 
     // -------------------------------
     // @Note: Init DWrite
+    FLOAT pt_per_em = 128.0f; // equivalent to font size.
+    FLOAT dip_per_inch = 96.0f;
+
     IDWriteFactory3 *dwrite_factory = NULL;
+    win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
 
-    FLOAT const pt_per_em = 70.0f; // equivalent to font size.
-                                   //FLOAT const inch_per_em = pt_per_em / 72.0f;
-    FLOAT const dip_per_inch = 96.0f;
-    //FLOAT const dip_per_em = dip_per_inch * inch_per_em;
+    IDWriteGdiInterop *dwrite_gdi_interop = NULL;
+    win32_assume_hr(dwrite_factory->GetGdiInterop(&dwrite_gdi_interop));
 
-    const WCHAR *base_font_family_name = L"Fira Code";
     IDWriteFontCollection *font_collection = NULL;
+    win32_assume_hr(dwrite_factory->GetSystemFontCollection(&font_collection));
+
+    Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
+
+    WCHAR *base_font_family_name = L"Fira Code";
     UINT32 family_index = 0;
     BOOL family_exists = FALSE;
-
-    win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
-    win32_assume_hr(dwrite_factory->GetSystemFontCollection(&font_collection));
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
 
     // @Note: Since fallback will be performed, finding base family isn't really necessary for our case.
@@ -138,9 +177,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     assert(family_exists);
 
     // @Note: 
-    // Use 'IDWriteFontFallback::MapCharacters()' and 'IDWriteTextAnalyzer::GetGlyphs()'.
-    // Those are for 'complex glyph shaping' and are necessary for all cases where there isn't a direct 1:1 mapping between characters and glyphs. (e.g., Arabics, Ligatures)
-    // 
     // 'IDWriteTextLayout' allows you to map a string and a base font into chunks of string with a resolved font.
     // For example, if there's a emoji in the string, it would automatically fallback from the builtin font to Segoe UI (the emoji font on Windows). 
     IDWriteFontFallback *font_fallback = NULL;
@@ -168,21 +204,32 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     IDWriteRenderingParams *rendering_params = NULL;
     win32_assume_hr(dwrite_factory->CreateRenderingParams(&rendering_params));
 
-    BOOL is_cleartype = TRUE;
+    B32 is_cleartype = TRUE;
     Dwrite_Glyph_Run *glyph_runs = NULL;
-    Dwrite_Outer_Hash_Table *outer_hashtable = NULL;
 
-    U32 atlas_width = 256;
-    U32 atlas_height = 256;
-    U32 atlas_pitch = (atlas_width << 2);
-    U8 *atlas_data = new U8[atlas_pitch*atlas_height];
+    IDWriteBitmapRenderTarget *dwrite_render_target = NULL;
+    U32 atlas_width  = 1024;
+    U32 atlas_height = 1024;
+    U32 atlas_pitch  = (atlas_width << 2);
+    HDC atlas_dc     = NULL;
+    {
+        win32_assume_hr(dwrite_gdi_interop->CreateBitmapRenderTarget(0/*[optional]HDC*/, atlas_width, atlas_height, &dwrite_render_target));
+        atlas_dc = dwrite_render_target->GetMemoryDC();
+    }
 
+    // Clear the Render Target
+    assert(atlas_dc);
+    HGDIOBJ original = SelectObject(atlas_dc, GetStockObject(DC_PEN));
+    SetDCPenColor(atlas_dc, RGB(0,0,0));
+    SelectObject(atlas_dc, GetStockObject(DC_BRUSH));
+    SetDCBrushColor(atlas_dc, RGB(0,0,0));
+    Rectangle(atlas_dc, 0, 0, atlas_width, atlas_height);
+    SelectObject(atlas_dc, original);
 
+    // Allocate CPU-side memory.
+    U64 atlas_size = atlas_pitch*atlas_height;
+    U8 *atlas_data = new U8[atlas_size];
 
-    // -----------------------------
-    // @Note: D3D
-    d3d11_init();
-    d3d11_create_swapchain_and_framebuffer(hwnd);
 
 
     // -----------------------------
@@ -191,7 +238,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     {
         win32_assume_hr(d3d11.device->CreateVertexShader(g_vs_main, sizeof(g_vs_main), NULL, &vertex_shader));
     }
-
 
 
     // -----------------------------
@@ -298,8 +344,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // ------------------------------
     // @Note: Create Texture
-
-#if 1
     ID3D11Texture2D *atlas = NULL;
     {
         D3D11_TEXTURE2D_DESC texture_desc = {};
@@ -328,7 +372,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     ID3D11ShaderResourceView *texture_view = NULL;
     d3d11.device->CreateShaderResourceView(atlas, NULL, &texture_view);
-#endif
+
 
     // ------------------------------
     // @Note: Create Blend State
@@ -367,6 +411,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     text = L"! Hello->World ;";
     text_length = (UINT32)wcslen(text);
+
 
     // ------------------------------
     // @Note: Main Loop
@@ -418,33 +463,64 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         F32 container_height_px = px_from_pt(container_height_pt);
 
 
-        // -------------------------------------------------
-        // @Todo: (container_dimension_pt, basleine _pt, string) -> (atlas, uv per glyph, series_of_pt_coordinate_per_glyph)
+        // @Todo(lsw): (container_dimension_pt, basleine _pt, string) -> (atlas, uv per glyph, series_of_pt_coordinate_per_glyph)
         // 1. Set rules of coordinate system. (O)
         // 2. Tackle series_of_pt_coordinate_per_glyph first.
 
 
-        // -------------------------------
-        // @Note: Parse text with DWrite.
-
+        // @Note(lsw): Parse text with DWrite.
         if (glyph_runs)
         { arrfree(glyph_runs); }
-        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, 
-                                               base_font_family_name, pt_per_em, text, text_length);
+        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
 
+        // @Note(lsw): Iterate through generated glyph runs and append uvs for according atlas if exists in the 2-level hash table.
+        V2 *glyph_uvs = NULL;
 
-
-        V2 glyph_origin = V2{0,0};
         UINT32 run_count = static_cast<UINT32>(arrlenu(glyph_runs));
-
         for (UINT32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
-            Dwrite_Glyph_Run glyph_run = glyph_runs[run_idx];
-            DWRITE_GLYPH_RUN run = glyph_run.run;
+            Dwrite_Glyph_Run run_wrapper = glyph_runs[run_idx];
+            DWRITE_GLYPH_RUN run = run_wrapper.run;
 
+            UINT64 glyph_count = arrlenu(run_wrapper.indices);
+
+            IDWriteFontFace5 *font_face = run_wrapper.font_face;
+            if (hmgeti(atlas_hash_table_out, font_face) != -1/*exists*/)
+            {
+                Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
+                for (U32 i = 0; i < glyph_count; ++i)
+                {
+                    U16 glyph_index = run_wrapper.indices[i];
+                    if (hmgeti(*hash_table_in, glyph_index) != -1/*exists*/)
+                    {
+                        V2 uv = hmget(*hash_table_in, glyph_index);
+                        arrput(glyph_uvs, uv);
+                    }
+                    else
+                    {
+                        V2 uv = atlas_pack();
+                        atlas_set_dirty();
+                        hmput(*hash_table_in, glyph_index, uv);
+                    }
+                }
+            }
+            else
+            {
+                Dwrite_Inner_Hash_Table **hash_table_in = new Dwrite_Inner_Hash_Table *;
+                for (U32 i = 0; i < glyph_count; ++i)
+                {
+                    U16 glyph_index = run_wrapper.indices[i];
+                    V2 uv = atlas_pack();
+                    atlas_set_dirty();
+                    hmput(*hash_table_in, glyph_index, uv);
+                }
+                hmput(atlas_hash_table_out, font_face, hash_table_in);
+            }
+
+#if 0
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
-            DWRITE_MEASURING_MODE measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
-            DWRITE_GRID_FIT_MODE grid_fit_mode = DWRITE_GRID_FIT_MODE_DEFAULT;
+            DWRITE_MEASURING_MODE measuring_mode  = DWRITE_MEASURING_MODE_NATURAL;
+            DWRITE_GRID_FIT_MODE grid_fit_mode    = DWRITE_GRID_FIT_MODE_DEFAULT;
 
             win32_assume_hr(glyph_run.font_face->GetRecommendedRenderingMode(run.fontEmSize,
                                                                              dip_per_inch, dip_per_inch,
@@ -455,6 +531,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                                                                              rendering_params,
                                                                              &rendering_mode,
                                                                              &grid_fit_mode));
+
 
             // @Note: CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
             // We won't bother big glyphs. (many hundreds of pt)
@@ -473,66 +550,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                                                         &analysis);
 
 
-            for (U32 i = 0; i < run.glyphCount; ++i)
-            {
-                F32 advance = run.glyphAdvances[i];
-                F32 xend = glyph_origin.x + advance;
-                if (xend >= container_width_pt)
-                {
-                    glyph_origin.x = 0.0f;
-                    glyph_origin.y += glyph_run.vertical_advance_in_pt; // @Todo: Subtract, actually.
-                }
-
-                const V2 tmp_dim = V2{30, 70};
-                render_quad_px_min_max(glyph_origin, glyph_origin + tmp_dim);
-
-
-
-
-
-                glyph_origin.x += advance;
-            }
-
-#if 0
-            // @Note: As long as you don't Release() font face, Windows will
-            // internally return the same address for the same font face.
-            IDWriteFontFace5 *font_face = glyph_run.font_face; // Outer-key.
-            if (hmgeti(outer_hashtable, font_face) != -1)
-            {
-                Dwrite_Inner_Hash_Table **inner_hash_table = hmget(outer_hashtable, font_face);
-
-                for (UINT32 i = 0; i < run.glyphCount; ++i)
-                {
-                    UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
-
-                    if (hmgeti(*inner_hash_table, font_face) != -1)
-                    {
-                        // @Todo: return uv
-                    }
-                    else
-                    {
-                        hmput(*inner_hash_table, glyph_index, 1219); // @Todo: UV value
-                    }
-                }
-            }
-            else
-            {
-                Dwrite_Inner_Hash_Table **inner_hash_table = new Dwrite_Inner_Hash_Table *;
-                *inner_hash_table = NULL;
-
-                hmput(outer_hashtable, font_face, inner_hash_table);
-
-                for (UINT32 i = 0; i < run.glyphCount; ++i)
-                {
-                    UINT16 glyph_index = glyph_run.indices[i]; // Inner-key.
-                    hmput(*inner_hash_table, glyph_index, 1219); // @Todo: UV value
-                }
-            }
-#endif
-
-
-
-#if 1
             // ------------------------
             // @Note: Create texture.
             const DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
@@ -563,7 +580,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                 bitmap_pitch <<= 2;
             }
 
-            BYTE *bitmap_data_24 = new BYTE[bitmap_size];
+            U8 *bitmap_data_24 = new U8[bitmap_size];
 
             win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_24, bitmap_size));
 
@@ -573,10 +590,13 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             {
                 for (UINT32 c = 0; c < bitmap_width; ++c)
                 {
-                    BYTE *dst = atlas_data + r*bitmap_pitch + c*4;
+                    BYTE *dst = atlas_data + r*atlas_pitch + c*4;
                     BYTE *src = bitmap_data_24 + r*bitmap_width*3 + c*3;
                     *(UINT32 *)dst = *(UINT32 *)src;
-                    dst[3] = 0xff;
+                    if (src[0] == 0 && src[1] == 0  && src[2] == 0)
+                    { dst[3] = 0x00; }
+                    else
+                    { dst[3] = 0xff; }
                 }
             }
 
@@ -584,10 +604,32 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             // -------------------------
             // @Note: Cleanup
             delete [] bitmap_data_24;
-#endif
 
             assert(analysis);
             analysis->Release();
+#endif
+        }
+
+        // -----------------------------------------
+        // @Note: Render text per container.
+        V2 origin_pt = {0.f,0.f};
+        for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
+        {
+            Dwrite_Glyph_Run run_wrapper = glyph_runs[run_idx];
+            DWRITE_GLYPH_RUN run = run_wrapper.run;
+
+            UINT64 glyph_count = arrlenu(run_wrapper.indices);
+            for (U32 i = 0; i < glyph_count; ++i)
+            {
+                FLOAT advance_pt = run_wrapper.advances[i];
+                if (origin_pt.x + advance_pt > container_width_pt)
+                {
+                    origin_pt.x = 0.0f;
+                    origin_pt.y -= run_wrapper.vertical_advance_pt;
+                }
+                render_glyph_px_origin(px_from_pt(origin_pt));
+                origin_pt.x += advance_pt;
+            }
         }
 
 
@@ -629,7 +671,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
 
 
-        
+
         FLOAT background_color[4] = {0.1f, 0.1f, 0.1f,1.0f};
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 

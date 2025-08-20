@@ -29,3 +29,8 @@ render_quad_px_min_max(V2 min, V2 max)
     r.indices[r.index_count++] = start_index + 2;
     r.indices[r.index_count++] = start_index + 3;
 }
+
+static void
+render_glyph_px_origin(V2 origin_px)
+{
+}

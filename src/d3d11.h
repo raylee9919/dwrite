@@ -10,7 +10,9 @@ struct D3D11
     ID3D11Device1 *device;
     ID3D11DeviceContext1 *device_ctx;
 
+    IDXGIDevice *dxgi_device;
     IDXGISwapChain1 *swapchain;
+
     ID3D11RenderTargetView *framebuffer_view;
 };
 

@@ -142,7 +142,7 @@ struct Dwrite_Glyph_Run
 {
     DWRITE_GLYPH_RUN    run;
     IDWriteFontFace5    *font_face;
-    FLOAT               vertical_advance_in_pt;
+    FLOAT               vertical_advance_pt;
     UINT16              *indices;
     FLOAT               *advances;
     DWRITE_GLYPH_OFFSET *offsets;
@@ -151,8 +151,8 @@ struct Dwrite_Glyph_Run
 typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
 struct Dwrite_Inner_Hash_Table
 {
-    UINT16 key;
-    UINT16 value;
+    UINT16 key; // index
+    V2 value;   // uv
 };
 
 typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
@@ -161,6 +161,23 @@ struct Dwrite_Outer_Hash_Table
     IDWriteFontFace5 *key;
     Dwrite_Inner_Hash_Table **value;
 };
+
+typedef struct Dwrite_Font_Run Dwrite_Font_Run;
+struct Dwrite_Font_Run
+{
+    UINT32 offset;
+    UINT32 length;
+    IDWriteFontFace5 *font_face;
+};
+
+
+// --------------------------------
+// @Note: Function Declarations.
+static Dwrite_Font_Run *dwrite_runs_from_font(IDWriteFontFallback1 *font_fallback,
+                                               IDWriteFontCollection *font_collection,
+                                               WCHAR *locale, WCHAR *base_family,
+                                               WCHAR *text, UINT32 text_length);
+
 
 
 #endif // LSW_DWRITE_H

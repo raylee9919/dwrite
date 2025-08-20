@@ -50,7 +50,7 @@ It is part of the Windows SDK which isnt' part of the OS.<br>
 ## 2-3. Text Formatting and Layout [[#]](https://learn.microsoft.com/en-us/windows/win32/directwrite/text-formatting-and-layout)
 
 ### 2-3-a. IDWriteTextFormat
-Describe the foramt for an entire string when rendering.<br>
+Describe the format for an entire string when rendering.<br>
 Call `IDWriteFactory::CreateTextFormat()` to create `IDWriteTextFormat` and specify formats.<br>
 Most of the attributes are immutable once created.
 

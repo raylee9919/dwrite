@@ -53,7 +53,6 @@ d3d11_create_swapchain_and_framebuffer(HWND hwnd)
     HRESULT hr = S_OK;
 
     IDXGIFactory2 *dxgi_factory = NULL;
-    IDXGIDevice1  *dxgi_device  = NULL;
     IDXGIAdapter  *dxgi_adapter = NULL;
     DXGI_ADAPTER_DESC adapter_desc = {};
 
@@ -64,10 +63,10 @@ d3d11_create_swapchain_and_framebuffer(HWND hwnd)
     if (d3d11.framebuffer_view)
     { d3d11.framebuffer_view->Release(); }
 
-    hr = d3d11.device->QueryInterface(__uuidof(dxgi_device), (void**)&dxgi_device);
+    hr = d3d11.device->QueryInterface(__uuidof(d3d11.dxgi_device), (void**)&d3d11.dxgi_device);
     assume(SUCCEEDED(hr));
 
-    hr = dxgi_device->GetAdapter(&dxgi_adapter);
+    hr = d3d11.dxgi_device->GetAdapter(&dxgi_adapter);
     assume(SUCCEEDED(hr));
 
     dxgi_adapter->GetDesc(&adapter_desc);
@@ -109,5 +108,4 @@ d3d11_create_swapchain_and_framebuffer(HWND hwnd)
     framebuffer->Release();
     dxgi_factory->Release();
     dxgi_adapter->Release();
-    dxgi_device->Release();
 }

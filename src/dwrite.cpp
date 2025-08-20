@@ -4,7 +4,7 @@
 static Dwrite_Map_Complexity_Result
 dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
                       IDWriteFontFace *font_face,
-                      const WCHAR *text, UINT32 text_length)
+                      WCHAR *text, UINT32 text_length)
 {
     Dwrite_Map_Complexity_Result result = {};
 
@@ -26,12 +26,52 @@ dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
     return result;
 }
 
+static Dwrite_Font_Run *
+dwrite_runs_from_font(IDWriteFontFallback1 *font_fallback,
+                      IDWriteFontCollection *font_collection,
+                      WCHAR *locale, WCHAR *base_family,
+                      WCHAR *text, UINT32 text_length)
+{
+    Dwrite_Font_Run *result = NULL;
+
+    UINT32 offset = 0;
+    while (offset < text_length)
+    {
+        UINT32 mapped_length = 0;
+        IDWriteFontFace5 *mapped_font_face = NULL;
+
+        // @Note(lhecker): It's safe to ignore scale in practice.
+        FLOAT dummy_scale;
+
+        Dwrite_Text_Analysis_Source src = {locale, text + offset, text_length - offset};
+        font_fallback->MapCharacters(&src, offset, text_length - offset, font_collection, base_family, NULL, 0,
+                                     &mapped_length, &dummy_scale, &mapped_font_face);
+
+        // @Todo(lsw): If no font contains the given codepoints MapCharacters() will return a NULL font_face.
+        // We need to replace them with ? glyphs, which this code doesn't do yet (by convention that's glyph index 0 in any font).
+        assume(mapped_font_face);
+
+        Dwrite_Font_Run run = {};
+        {
+            run.offset    = offset;
+            run.length    = mapped_length;
+            run.font_face = mapped_font_face;
+        }
+
+        arrput(result, run);
+
+        offset += mapped_length;
+    }
+
+    return result;
+}
+
 static Dwrite_Glyph_Run *
 dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                           IDWriteFontCollection *font_collection,
                           IDWriteTextAnalyzer1 *text_analyzer,
-                          const WCHAR *locale, const WCHAR *base_family,
-                          FLOAT font_size, const WCHAR *text, UINT32 text_length)
+                          WCHAR *locale, WCHAR *base_family,
+                          FLOAT font_size, WCHAR *text, UINT32 text_length)
 {
     Dwrite_Glyph_Run *result = NULL;
 
@@ -63,7 +103,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
 
         // Once our string is segmented to runs of identical font face,
         // we must now segment those once again into runs of same complexity.
-        const WCHAR *remain_txt = text + offset;
+        WCHAR *remain_txt = text + offset;
         UINT32 remain_len = mapped_length;
 
         while (remain_len > 0)
@@ -97,7 +137,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
             }
             else
             {
-                const WCHAR *text = remain_txt;
+                WCHAR *text = remain_txt;
                 const UINT32 text_length = complexity.mapped_length;
 
                 // @Note: Split the text into runs of the same script ("language"), bidi, etc.
@@ -186,13 +226,13 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                                                            actual_additional_glyph_count,
                                                            mapped_font_face,
                                                            font_size,
-                                                           FALSE,                               // isSideways
-                                                           FALSE,                               // isRightToLeft
+                                                           FALSE, // isSideways
+                                                           FALSE, // isRightToLeft
                                                            &analysis_sink_result.analysis,
                                                            locale,
-                                                           NULL,                                // features
-                                                           NULL,                                // featureRangeLengths
-                                                           0,                                   // featureRanges
+                                                           NULL,  // features
+                                                           NULL,  // featureRangeLengths
+                                                           0,     // featureRanges
 
                                                            /* out */
                                                            run.advances + current_glyph_count, // @Todo: Unit consistency check.
@@ -204,13 +244,13 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
             remain_len -= complexity.mapped_length;
         }
 
-        run.vertical_advance_in_pt = (FLOAT)(metrics.ascent + metrics.descent + metrics.lineGap) * pt_per_design_unit;
-        run.run.fontFace       = mapped_font_face;
-        run.run.fontEmSize     = font_size;
-        run.run.glyphCount     = static_cast<UINT32>(arrlenu(run.indices));
-        run.run.glyphIndices   = run.indices;
-        run.run.glyphAdvances  = run.advances;
-        run.run.glyphOffsets   = run.offsets;
+        run.vertical_advance_pt = (FLOAT)(metrics.ascent + metrics.descent + metrics.lineGap) * pt_per_design_unit;
+        run.run.fontFace        = mapped_font_face;
+        run.run.fontEmSize      = font_size;
+        run.run.glyphCount      = static_cast<UINT32>(arrlenu(run.indices));
+        run.run.glyphIndices    = run.indices;
+        run.run.glyphAdvances   = run.advances;
+        run.run.glyphOffsets    = run.offsets;
 
         // Append to the list of runs.
         arrput(result, run);
