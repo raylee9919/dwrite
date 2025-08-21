@@ -99,6 +99,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
 
         DWRITE_FONT_METRICS1 metrics = {};
         mapped_font_face->GetMetrics(&metrics);
+        run.design_units_per_em = (FLOAT)metrics.designUnitsPerEm;
         FLOAT pt_per_design_unit = font_size / metrics.designUnitsPerEm;
 
         // Once our string is segmented to runs of identical font face,

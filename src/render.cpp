@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Seong Woo Lee. All rights reserved.
 
-static void
+function void
 render_quad_px_min_max(V2 min, V2 max)
 {
     Renderer &r = renderer;
@@ -30,7 +30,8 @@ render_quad_px_min_max(V2 min, V2 max)
     r.indices[r.index_count++] = start_index + 3;
 }
 
-static void
+function void
 render_glyph_px_origin(V2 origin_px)
 {
+    V2 min_px = origin_px
 }

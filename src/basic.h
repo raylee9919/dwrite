@@ -24,10 +24,10 @@ typedef S32      B32;
 typedef S64      B64;
 typedef float    F32;
 typedef double   F64;
-typedef struct { U64 u64[2]; } U128;
+typedef union { U32 u32[4]; U64 u64[2]; } U128;
 
 
-// Note: Macro-Functions
+// @Note: Macro-Functions
 #define assert(exp) do { if (!(exp)) __debugbreak(); } while(0)
 #define assume(exp) do { if (!(exp)) __debugbreak(); } while(0)
 #define array_count(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -35,6 +35,14 @@ typedef struct { U64 u64[2]; } U128;
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define memory_copy(src, dst, bytes) memcpy((void *)dst, (void *)src, bytes)
 #define quick_sort(ptr, count, each_size, comp) qsort(ptr, count, each_size, comp)
+
+// @Note: Data Structures
+#define dll_append(sentinel, item) {  \
+    sentinel->prev->next = item;      \
+    item->prev = sentinel->prev;      \
+    item->next = sentinel;            \
+    sentinel->prev = item;            \
+}
 
 
 #endif // SWL_BASIC_H

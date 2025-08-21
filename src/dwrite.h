@@ -141,8 +141,11 @@ typedef struct Dwrite_Glyph_Run Dwrite_Glyph_Run;
 struct Dwrite_Glyph_Run
 {
     DWRITE_GLYPH_RUN    run;
+
     IDWriteFontFace5    *font_face;
     FLOAT               vertical_advance_pt;
+    FLOAT               design_units_per_em;
+
     UINT16              *indices;
     FLOAT               *advances;
     DWRITE_GLYPH_OFFSET *offsets;
@@ -152,7 +155,7 @@ typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
 struct Dwrite_Inner_Hash_Table
 {
     UINT16 key; // index
-    V2 value;   // uv
+    U128 value;   // uvs
 };
 
 typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
