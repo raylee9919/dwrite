@@ -151,11 +151,21 @@ struct Dwrite_Glyph_Run
     DWRITE_GLYPH_OFFSET *offsets;
 };
 
+typedef struct Glyph_Cel Glyph_Cel;
+struct Glyph_Cel
+{
+    V2 uv_min;
+    V2 uv_max;
+    F32 width_px;
+    F32 height_px;
+    V2 offset; // offset of a pen from baseline origin of a glyph in px.
+};
+
 typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
 struct Dwrite_Inner_Hash_Table
 {
-    UINT16 key; // index
-    U128 value;   // uvs
+    UINT16      key;
+    Glyph_Cel   value;
 };
 
 typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
