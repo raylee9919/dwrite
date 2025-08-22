@@ -137,20 +137,6 @@ struct Dwrite_Map_Complexity_Result
     BOOL is_simple = FALSE;
 };
 
-typedef struct Dwrite_Glyph_Run Dwrite_Glyph_Run;
-struct Dwrite_Glyph_Run
-{
-    DWRITE_GLYPH_RUN    run;
-
-    IDWriteFontFace5    *font_face;
-    FLOAT               vertical_advance_pt;
-    FLOAT               design_units_per_em;
-
-    UINT16              *indices;
-    FLOAT               *advances;
-    DWRITE_GLYPH_OFFSET *offsets;
-};
-
 typedef struct Glyph_Cel Glyph_Cel;
 struct Glyph_Cel
 {
@@ -171,26 +157,37 @@ struct Dwrite_Inner_Hash_Table
 typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
 struct Dwrite_Outer_Hash_Table
 {
-    IDWriteFontFace5 *key;
+    U64 key;
     Dwrite_Inner_Hash_Table **value;
 };
 
-typedef struct Dwrite_Font_Run Dwrite_Font_Run;
-struct Dwrite_Font_Run
+typedef struct Dwrite_Font_Metrics Dwrite_Font_Metrics;
+struct Dwrite_Font_Metrics
 {
-    UINT32 offset;
-    UINT32 length;
-    IDWriteFontFace5 *font_face;
+    F32 du_per_em;
+    F32 vertical_advance_pt;
 };
 
+typedef struct Dwrite_Font_Hash_Table Dwrite_Font_Hash_Table;
+struct Dwrite_Font_Hash_Table
+{
+    U64 key; // (U64)(IDwriteFontFace *)
+    Dwrite_Font_Metrics value;
+};
 
-// --------------------------------
-// @Note: Function Declarations.
-static Dwrite_Font_Run *dwrite_runs_from_font(IDWriteFontFallback1 *font_fallback,
-                                               IDWriteFontCollection *font_collection,
-                                               WCHAR *locale, WCHAR *base_family,
-                                               WCHAR *text, UINT32 text_length);
+typedef struct Dwrite_Font_Fallback_Result Dwrite_Font_Fallback_Result;
+struct Dwrite_Font_Fallback_Result
+{
+    U32 length;
+    IDWriteFontFace5 *font_face;
+};
+static Dwrite_Font_Fallback_Result
+dwrite_font_fallback(IDWriteFontFallback *font_fallback,
+                     IDWriteFontCollection *font_collection,
+                     WCHAR *base_family, WCHAR *locale,
+                     WCHAR *text, UINT32 text_length);
 
 
+global Dwrite_Font_Hash_Table *dwrite_font_hash_table;
 
 #endif // LSW_DWRITE_H

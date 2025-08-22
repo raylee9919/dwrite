@@ -29,7 +29,7 @@
 
 //--------------------
 // @Note: [.h]
-#include "basic.h"
+#include "core.h"
 #include "math.h"
 #define STB_DS_IMPLEMENTATION
 #define STBDS_ASSERT
@@ -130,8 +130,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // -------------------------------
     // @Note: Init DWrite
-    FLOAT base_font_pt_per_em = 40.0f; // equivalent to font size.
-    FLOAT dip_per_inch = 96.0f;
+    FLOAT pt_per_em = 40.0f; // equivalent to font size.
+    FLOAT px_per_inch = 96.0f;
 
     IDWriteFactory3 *dwrite_factory = NULL;
     win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
@@ -181,7 +181,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     B32 is_cleartype = TRUE;
     DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
-    Dwrite_Glyph_Run *glyph_runs = NULL;
+    DWRITE_GLYPH_RUN *glyph_runs = NULL;
 
     U32 atlas_width  = 1024;
     U32 atlas_height = 1024;
@@ -383,7 +383,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     WCHAR *text = new WCHAR[655356];
     UINT32 text_length = 0;
 
-    text = L"!Hello->World;";
+    text = L"안녕Hello";
     text_length = (U32)wcslen(text);
 
     // @Note: Iterate through generated glyph runs and append uvs in the atlas if exists in the 2-level hash table.
@@ -447,7 +447,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         if (glyph_runs)
         { arrfree(glyph_runs); }
-        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, base_font_pt_per_em, text, text_length);
+        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
 
         if (glyph_cels)
         { arrsetlen(glyph_cels, 0); }
@@ -455,12 +455,14 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         U64 run_count = arrlenu(glyph_runs);
         for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
-            Dwrite_Glyph_Run run_wrapper = glyph_runs[run_idx];
-            DWRITE_GLYPH_RUN run = run_wrapper.run;
+            DWRITE_GLYPH_RUN run = glyph_runs[run_idx];
+            U32 glyph_count = run.glyphCount;
+            IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
 
-            UINT64 glyph_count = arrlenu(run_wrapper.indices);
 
-            IDWriteFontFace5 *font_face = run_wrapper.font_face;
+            assert(hmgeti(dwrite_font_hash_table, (U64)font_face));
+            Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, (U64)font_face);
+
 
             // @Note(lsw): Create rendering mode of a font face.
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
@@ -468,7 +470,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             DWRITE_GRID_FIT_MODE grid_fit_mode    = DWRITE_GRID_FIT_MODE_DEFAULT;
 
             win32_assume_hr(font_face->GetRecommendedRenderingMode(run.fontEmSize,
-                                                                   dip_per_inch, dip_per_inch,
+                                                                   px_per_inch, px_per_inch,
                                                                    NULL, // transform
                                                                    run.isSideways,
                                                                    DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
@@ -479,14 +481,14 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
 
             // Look into 2-tier hash table.
-            if (hmgeti(atlas_hash_table_out, font_face) != -1/*exists*/)
+            if (hmgeti(atlas_hash_table_out, (U64)font_face) != -1/*exists*/)
             {
                 Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
 
                 // @Todo(lsw): Cleanup.
                 for (U32 i = 0; i < glyph_count; ++i)
                 {
-                    U16 glyph_index = run_wrapper.indices[i];
+                    U16 glyph_index = run.glyphIndices[i];
 
                     if (hmgeti(*hash_table_in, glyph_index) == -1) // glyph index doesn't exist in the inner-table
                     {
@@ -495,12 +497,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                         win32_assume_hr(font_face->GetDesignGlyphMetrics(&glyph_index, 1, &metrics, run.isSideways));
 
                         // Calc blackbox of a glyph.
-                        assume(run_wrapper.design_units_per_em != 0);
-                        FLOAT bb_width_em = (FLOAT)(metrics.advanceWidth - metrics.leftSideBearing - metrics.rightSideBearing) / run_wrapper.design_units_per_em;
-                        FLOAT bb_height_em = (FLOAT)(metrics.advanceHeight - metrics.topSideBearing - metrics.bottomSideBearing) / run_wrapper.design_units_per_em;
-                        FLOAT pt_per_em = run.fontEmSize;
-                        FLOAT bb_width_pt = bb_width_em * pt_per_em;
-                        FLOAT bb_height_pt = bb_height_em * pt_per_em;
+                        F32 bb_width_em = (FLOAT)(metrics.advanceWidth - metrics.leftSideBearing - metrics.rightSideBearing) / font_metrics.du_per_em;
+                        F32 bb_height_em = (FLOAT)(metrics.advanceHeight - metrics.topSideBearing - metrics.bottomSideBearing) / font_metrics.du_per_em;
+                        F32 pt_per_em = run.fontEmSize;
+                        F32 bb_width_pt = bb_width_em * pt_per_em;
+                        F32 bb_height_pt = bb_height_em * pt_per_em;
 
                         // CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
                         // We won't bother big glyphs. (many hundreds of pt)
@@ -635,8 +636,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                                 cel.uv_max = {(F32)x2 / (F32)atlas_width, (F32)y2 / (F32)atlas_height};
                                 cel.width_px = width_px;
                                 cel.height_px = height_px;
-                                cel.offset.x = px_from_pt((F32)metrics.leftSideBearing / run_wrapper.design_units_per_em * run.fontEmSize);
-                                cel.offset.y = px_from_pt((F32)metrics.topSideBearing / run_wrapper.design_units_per_em * run.fontEmSize);
+                                cel.offset.x = px_from_pt((F32)metrics.leftSideBearing / font_metrics.du_per_em * run.fontEmSize);
+                                cel.offset.y = px_from_pt((F32)metrics.topSideBearing / font_metrics.du_per_em * run.fontEmSize);
                             }
 
                             hmput(*hash_table_in, glyph_index, cel);
@@ -654,9 +655,10 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             }
             else // font face doesn't exist in the outer-table
             {
+#if 0
                 Dwrite_Inner_Hash_Table **hash_table_in = new Dwrite_Inner_Hash_Table *;
                 *hash_table_in = NULL;
-                hmput(atlas_hash_table_out, font_face, hash_table_in);
+                hmput(atlas_hash_table_out, (U64)font_face, hash_table_in);
 
                 for (U32 i = 0; i < glyph_count; ++i)
                 {
@@ -824,6 +826,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                         arrput(glyph_cels, cel);
                     }
                 }
+#endif
             }
         }
 
@@ -834,18 +837,12 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         V2 offset_px = px_from_pt(offset_pt);
 
         static F32 time = 0.0f;
-        time += dt;
-        container_width_pt = 100 * (sinf(time)*0.5f + 1.5f);
-        container_width_px = px_from_pt(container_width_pt);
-
-        render_quad_px_min_max(V2{offset_px.x, offset_px.y - container_height_px},
-                               V2{offset_px.x + container_width_px, offset_px.y});
 
         V2 origin_pt = {};
 
         for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
-            Dwrite_Glyph_Run run_wrapper = glyph_runs[run_idx];
+            Dwrite_Run run_wrapper = glyph_runs[run_idx];
             DWRITE_GLYPH_RUN run = run_wrapper.run;
 
             U64 glyph_count = arrlenu(run_wrapper.indices);
