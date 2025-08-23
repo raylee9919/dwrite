@@ -122,7 +122,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                     offsets[idx]  = {};
                 }
             }
-            else
+            else // !simple
             {
                 WCHAR *text = remain_text;
                 U32 text_length = complexity.mapped_length;
@@ -233,7 +233,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         DWRITE_GLYPH_RUN run = {};
         run.fontFace      = run_font_face;
         run.fontEmSize    = px_from_pt(pt_per_em);
-        run.glyphCount    = (UINT32)arrlenu(indices);
+        run.glyphCount    = (U32)arrlenu(indices);
         run.glyphIndices  = indices;
         run.glyphAdvances = advances;
         run.glyphOffsets  = offsets;

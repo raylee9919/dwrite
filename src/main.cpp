@@ -499,7 +499,6 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                         // Calc blackbox of a glyph.
                         F32 bb_width_em = (FLOAT)(metrics.advanceWidth - metrics.leftSideBearing - metrics.rightSideBearing) / font_metrics.du_per_em;
                         F32 bb_height_em = (FLOAT)(metrics.advanceHeight - metrics.topSideBearing - metrics.bottomSideBearing) / font_metrics.du_per_em;
-                        F32 pt_per_em = run.fontEmSize;
                         F32 bb_width_pt = bb_width_em * pt_per_em;
                         F32 bb_height_pt = bb_height_em * pt_per_em;
 
@@ -833,6 +832,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         // -----------------------------------------
         // @Note: Render text per container.
 
+#if 0
         V2 offset_pt = {100.0f, 300.0f}; 
         V2 offset_px = px_from_pt(offset_pt);
 
@@ -840,12 +840,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         V2 origin_pt = {};
 
-        for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
+        for (U32 ri = 0; ri < run_count; ++ri)
         {
-            Dwrite_Run run_wrapper = glyph_runs[run_idx];
-            DWRITE_GLYPH_RUN run = run_wrapper.run;
+            DWRITE_GLYPH_RUN run = glyph_runs[ri];
 
-            U64 glyph_count = arrlenu(run_wrapper.indices);
+            U64 glyph_count = arrlenu(run.glyphIndices);
             for (U32 gi = 0; gi < glyph_count; ++gi)
             {
                 F32 advance_pt = run_wrapper.advances[gi];
@@ -883,6 +882,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
                 origin_pt.x += advance_pt;
             }
         }
+#endif
 
         // -----------------------
         // @Note: D3D11 Pass
