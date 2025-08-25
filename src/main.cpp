@@ -30,6 +30,8 @@
 //--------------------
 // @Note: [.h]
 #include "core.h"
+#include "arena.h"
+#include "ds.h"
 #include "math.h"
 #define STB_DS_IMPLEMENTATION
 #define STBDS_ASSERT
@@ -41,14 +43,18 @@
 //--------------------
 // @Note: [.cpp]
 #include "math.cpp"
+#include "arena.cpp"
 #include "dwrite.cpp"
 #include "d3d11.cpp"
 #include "render.cpp"
 
 //--------------------
-// @Note: Generated hlsl byte code.
+// @Note: Generated HLSL byte code.
 #include "shader_vs.h"
 #include "shader_ps.h"
+
+#include "panel_vs.h"
+#include "panel_ps.h"
 
 
 #define win32_assume_hr(hr) assume(SUCCEEDED(hr))
@@ -74,17 +80,208 @@ win32_window_procedure(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     return result;
 }
 
-typedef struct Binpack Binpack;
-struct Binpack
+typedef struct Bin Bin;
+struct Bin
 {
-    Binpack *prev;
-    Binpack *next;
+    Bin *prev;
+    Bin *next;
     B32 occupied;
     U32 x, y, w, h;
 };
 
+static void
+dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
+                                   B32 is_cleartype,
+                                   DWRITE_GLYPH_RUN run,
+                                   DWRITE_RENDERING_MODE1 rendering_mode,
+                                   DWRITE_MEASURING_MODE measuring_mode,
+                                   DWRITE_GRID_FIT_MODE grid_fit_mode,
+                                   Dwrite_Inner_Hash_Table **hash_table_in,
+                                   Bitmap atlas,
+                                   Bin *atlas_partition_sentinel,
+                                   Glyph_Cel *glyph_cels)
+{
+    HRESULT hr = S_OK;
+
+    U64 glyph_count = arrlenu(run.glyphIndices);
+    IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
+    assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
+    Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, run.fontFace);
+
+    F32 em_per_du = 1.0f / font_metrics.du_per_em;
+    F32 px_per_du = run.fontEmSize * em_per_du;
+
+    DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
+
+    // Check if each glyph in the run exists in the inner hash table.
+    for (U32 i = 0; i < glyph_count; ++i)
+    {
+        U16 glyph_index = run.glyphIndices[i];
+
+        if (hmgeti(*hash_table_in, glyph_index) == -1) // glyph index doesn't exist in the inner-table
+        {
+            // Get single glyph's metrics.
+            DWRITE_GLYPH_METRICS metrics = {};
+            win32_assume_hr(font_face->GetDesignGlyphMetrics(&glyph_index, 1, &metrics, run.isSideways));
+
+            // CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
+            // We won't bother big glyphs. (many hundreds of pt)
+            if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
+            { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
+
+            DWRITE_GLYPH_RUN single_glyph_run = {};
+            {
+                single_glyph_run.fontFace      = font_face;
+                single_glyph_run.fontEmSize    = run.fontEmSize;
+                single_glyph_run.glyphCount    = 1;
+                single_glyph_run.glyphIndices  = &glyph_index;
+                single_glyph_run.glyphAdvances = NULL;
+                single_glyph_run.glyphOffsets  = NULL;
+                single_glyph_run.isSideways    = run.isSideways;
+                single_glyph_run.bidiLevel     = run.bidiLevel;
+            }
+
+            IDWriteGlyphRunAnalysis *analysis = NULL;
+            win32_assume_hr(dwrite_factory->CreateGlyphRunAnalysis(&single_glyph_run,
+                                                                   NULL, // transform
+                                                                   rendering_mode,
+                                                                   measuring_mode,
+                                                                   grid_fit_mode,
+                                                                   is_cleartype ? DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE : DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                                                                   0.0f, // baselineOriginX
+                                                                   0.0f, // baselineOriginY
+                                                                   &analysis));
+
+            RECT bounds = {};
+            hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
+            if (FAILED(hr))
+            {
+                // @Todo: The font doesn't support DWRITE_TEXTURE_CLEARTYPE_3x1.
+                // Retry with DWRITE_TEXTURE_ALIASED_1x1.
+                assume(! "x");
+            }
+
+            Glyph_Cel cel = {};
+
+            if (bounds.right > bounds.left && bounds.bottom > bounds.top)
+            {
+                U32 blackbox_width  = bounds.right - bounds.left;
+                U32 blackbox_height = bounds.bottom - bounds.top;
+
+                U32 margin = 1;
+                U32 bitmap_width  = blackbox_width + 2*margin;
+                U32 bitmap_height = blackbox_height + 2*margin;
+
+                U32 rgb_bitmap_size = (is_cleartype) ? (blackbox_width*3)*blackbox_height : blackbox_width*blackbox_height; 
+                U8 *bitmap_data_rgb = new U8[rgb_bitmap_size];
+                win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_rgb, rgb_bitmap_size));
+
+                B32 fit = false;
+                U32 x1 = 0;
+                U32 y1 = 0;
+                U32 x2 = 0;
+                U32 y2 = 0;
+
+                for (Bin *partition = atlas_partition_sentinel->next;
+                     partition != atlas_partition_sentinel;
+                     partition = partition->next)
+                {
+                    if (!partition->occupied)
+                    {
+                        U32 w1 = partition->w;
+                        U32 h1 = partition->h;
+                        U32 w2 = bitmap_width;
+                        U32 h2 = bitmap_height;
+
+                        if (w1 >= w2 && h1 >= h2)
+                        {
+                            x1 = partition->x;
+                            y1 = partition->y;
+                            x2 = x1 + w2;
+                            y2 = y1 + h2;
+                            fit = true;
+
+                            U32 dx[3] = {w2, 0, w2};
+                            U32 dy[3] = {0, h2, h2};
+                            U32 nw[3] = {w1-w2, w2, w1-w2};
+                            U32 nh[3] = {h2, h1-h2, h1-h2};
+
+                            for (U32 npi = 0; npi < 3; ++npi)
+                            {
+                                Bin *new_partition = new Bin;
+                                new_partition->occupied = false;
+                                new_partition->x = x1 + dx[npi];
+                                new_partition->y = y1 + dy[npi];
+                                new_partition->w = nw[npi];
+                                new_partition->h = nh[npi];
+                                dll_append(atlas_partition_sentinel, new_partition);
+                            }
+
+                            partition->occupied = true;
+                            partition->w = w2;
+                            partition->h = h2;
+
+                            break;
+                        }
+                    }
+                }
+
+                if (fit)
+                {
+                    // RGB to RGBA
+                    for (U32 r = 0; r < blackbox_height; ++r)
+                    {
+                        for (U32 c = 0; c < blackbox_width; ++c)
+                        {
+                            U8 *dst = atlas.data + (y1+r+margin)*atlas.pitch + (x1+c+margin)*4;
+                            U8 *src = bitmap_data_rgb + r*blackbox_width*3 + c*3;
+                            *(U32 *)dst = *(U32 *)src;
+                            if (src[0] == 0 && src[1] == 0  && src[2] == 0)
+                            { dst[3] = 0x00; }
+                            else
+                            { dst[3] = 0xff; }
+                        }
+                    }
+                }
+                else
+                {
+                    assume(! "x");
+                }
+
+                delete [] bitmap_data_rgb;
+
+                cel.uv_min       = {(F32)(x1 + margin) / (F32)atlas.width, (F32)(y1 + margin) / (F32)atlas.height};
+                cel.uv_max       = {(F32)(x2 - margin) / (F32)atlas.width, (F32)(y2 - margin) / (F32)atlas.height};
+                cel.width_px     = (F32)blackbox_width;
+                cel.height_px    = (F32)blackbox_height;
+                cel.offset_px.x  = (F32)metrics.leftSideBearing * px_per_du;
+                cel.offset_px.y  = (F32)(metrics.verticalOriginY - metrics.topSideBearing) * px_per_du;
+            }
+            else
+            {
+                cel.uv_min       = V2{0.0f, 0.0f};
+                cel.uv_max       = V2{0.0f, 0.0f};
+                cel.width_px     = 0.0f;
+                cel.height_px    = 0.0f;
+                cel.offset_px.x  = 0.0f;
+                cel.offset_px.y  = 0.0f;
+            }
+
+            array_push(glyph_cels, cel);
+            hmput(*hash_table_in, glyph_index, cel);
+
+            analysis->Release();
+        }
+        else  // glyph index exists in the inner-table
+        {
+            Glyph_Cel cel = hmget(*hash_table_in, glyph_index);
+            array_push(glyph_cels, cel);
+        }
+    }
+}
+
 int WINAPI
-wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCmdShow*/)
+wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmdshow*/)
 {
     HRESULT hr = S_OK;
 
@@ -114,11 +311,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // ------------------------------
     // @Note: Query QPC frequency.
-    DOUBLE counter_frequency_inverse;
+    F64 counter_frequency_inverse;
     {
         LARGE_INTEGER li = {};
         QueryPerformanceFrequency(&li);
-        counter_frequency_inverse = (1.0 / (DOUBLE)li.QuadPart);
+        counter_frequency_inverse = (1.0 / (F64)li.QuadPart);
     }
 
     // -----------------------------
@@ -130,8 +327,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // -------------------------------
     // @Note: Init DWrite
-    FLOAT pt_per_em = 40.0f; // equivalent to font size.
-    FLOAT px_per_inch = 96.0f;
+    F32 pt_per_em = 20.0f;
+    F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
 
     IDWriteFactory3 *dwrite_factory = NULL;
     win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
@@ -141,9 +338,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
-    //WCHAR *base_font_family_name = L"Fira Code";
-    WCHAR *base_font_family_name = L"Consolas";
-    UINT32 family_index = 0;
+    WCHAR *base_font_family_name = L"Roboto Mono";
+    U32 family_index = 0;
     BOOL family_exists = FALSE;
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
 
@@ -180,25 +376,28 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     win32_assume_hr(dwrite_factory->CreateRenderingParams(&rendering_params));
 
     B32 is_cleartype = TRUE;
-    DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
     DWRITE_GLYPH_RUN *glyph_runs = NULL;
 
-    U32 atlas_width  = 1024;
-    U32 atlas_height = 1024;
-    U32 atlas_pitch  = (atlas_width << 2);
-    U64 atlas_size = atlas_pitch*atlas_height;
-    U8 *atlas_data = new U8[atlas_size];
-    Binpack *atlas_partition_sentinel = new Binpack;
+    Bitmap atlas = {};
     {
-        Binpack *head = new Binpack;
+        atlas.width  = 1024;
+        atlas.height = 1024;
+        atlas.pitch  = (atlas.width << 2);
+        atlas.size   = atlas.pitch*atlas.height;
+        atlas.data   = new U8[atlas.size];
+    }
+
+    Bin *atlas_partition_sentinel = new Bin;
+    {
+        Bin *head = new Bin;
         {
             head->prev = atlas_partition_sentinel;
             head->next = atlas_partition_sentinel;
             head->occupied = false;
             head->x = 0;
             head->y = 0;
-            head->w = atlas_width;
-            head->h = atlas_height;
+            head->w = atlas.width;
+            head->h = atlas.height;
         }
         atlas_partition_sentinel->prev = head;
         atlas_partition_sentinel->next = head;
@@ -209,17 +408,19 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     // -----------------------------
     // @Note: Create Vertex Shader
     ID3D11VertexShader *vertex_shader = NULL;
-    {
-        win32_assume_hr(d3d11.device->CreateVertexShader(g_vs_main, sizeof(g_vs_main), NULL, &vertex_shader));
-    }
+    { win32_assume_hr(d3d11.device->CreateVertexShader(g_vs_main, sizeof(g_vs_main), NULL, &vertex_shader)); }
+
+    ID3D11VertexShader *panel_vs = NULL;
+    { win32_assume_hr(d3d11.device->CreateVertexShader(g_panel_vs_main, sizeof(g_panel_vs_main), NULL, &panel_vs)); }
 
 
     // -----------------------------
     // @Note: Create Pixel Shader
     ID3D11PixelShader *pixel_shader = NULL;
-    {
-        win32_assume_hr(d3d11.device->CreatePixelShader(g_ps_main, sizeof(g_ps_main), NULL, &pixel_shader));
-    }
+    { win32_assume_hr(d3d11.device->CreatePixelShader(g_ps_main, sizeof(g_ps_main), NULL, &pixel_shader)); }
+
+    ID3D11PixelShader *panel_ps = NULL;
+    { win32_assume_hr(d3d11.device->CreatePixelShader(g_panel_ps_main, sizeof(g_panel_ps_main), NULL, &panel_ps)); }
 
 
 
@@ -236,15 +437,10 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     }
 
 
-    //-------------------------------------
-    // @Note: RECT
-    // Endpoint exclusive.
-    // Windows scale option independent.
-    // Windows resolution option dependent.
     RECT window_rect = {};
     GetClientRect(hwnd, &window_rect);
-    UINT32 window_width  = (window_rect.right - window_rect.left);
-    UINT32 window_height = (window_rect.bottom - window_rect.top);
+    U32 window_width  = (window_rect.right - window_rect.left);
+    U32 window_height = (window_rect.bottom - window_rect.top);
 
     //-------------------------------------
     // @Note: Create Vertex Buffer
@@ -318,12 +514,12 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
     // ------------------------------
     // @Note: Create Texture
-    ID3D11Texture2D *atlas = NULL;
+    ID3D11Texture2D *d3d_atlas = NULL;
     {
         D3D11_TEXTURE2D_DESC texture_desc = {};
         {
-            texture_desc.Width              = atlas_width;
-            texture_desc.Height             = atlas_height;
+            texture_desc.Width              = atlas.width;
+            texture_desc.Height             = atlas.height;
             texture_desc.MipLevels          = 1;
             texture_desc.ArraySize          = 1;
             texture_desc.SampleDesc.Count   = 1;
@@ -337,15 +533,15 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         D3D11_SUBRESOURCE_DATA texture_subresource_data = {};
         {
-            texture_subresource_data.pSysMem      = atlas_data;
-            texture_subresource_data.SysMemPitch  = atlas_pitch;
+            texture_subresource_data.pSysMem      = atlas.data;
+            texture_subresource_data.SysMemPitch  = atlas.pitch;
         }
 
-        d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &atlas);
+        d3d11.device->CreateTexture2D(&texture_desc, &texture_subresource_data, &d3d_atlas);
     }
 
     ID3D11ShaderResourceView *texture_view = NULL;
-    d3d11.device->CreateShaderResourceView(atlas, NULL, &texture_view);
+    d3d11.device->CreateShaderResourceView(d3d_atlas, NULL, &texture_view);
 
 
     // ------------------------------
@@ -373,7 +569,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     hr = d3d11.device->CreateBlendState(&blend_desc, &blend_state);
     assume(SUCCEEDED(hr));
 
-    UINT64 last_counter;
+    U64 last_counter;
     {
         LARGE_INTEGER li = {};
         QueryPerformanceCounter(&li);
@@ -381,16 +577,14 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
     }
 
     WCHAR *text = new WCHAR[655356];
-    UINT32 text_length = 0;
+    U32 text_length = 0;
 
-    text = L"안녕Hello";
+    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
     text_length = (U32)wcslen(text);
-
-    // @Note: Iterate through generated glyph runs and append uvs in the atlas if exists in the 2-level hash table.
-    Glyph_Cel *glyph_cels = NULL;
 
     // ------------------------------
     // @Note: Main Loop
+    Arena frame_arena = arena_alloc(GB(2));
     while (g_running)
     {
         for (MSG msg; PeekMessage(&msg, hwnd, 0, 0, PM_REMOVE);)
@@ -410,59 +604,53 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
 
         // ---------------------------
         // @Note: Query new dt
-        UINT64 new_counter;
+        U64 new_counter;
         {
             LARGE_INTEGER li = {};
             QueryPerformanceCounter(&li);
             new_counter = li.QuadPart;
         }
-        DOUBLE dt = (DOUBLE)(new_counter - last_counter) * counter_frequency_inverse;
+        F64 dt = (F64)(new_counter - last_counter) * counter_frequency_inverse;
         last_counter = new_counter;
 
 
         // ---------------------------
         // @Note: Update
+        arena_clear(&frame_arena);
+
         renderer.vertex_count = 0;
         renderer.index_count = 0;
 
-        SetWindowTextW(hwnd, text);
+        Glyph_Cel *glyph_cels = array_alloc(&frame_arena, Glyph_Cel, 2048);
 
         // -----------------------------
         // @Note: Text container.
-        V2 container_min_pt     = V2{200,200};
-        F32 container_width_pt  = 200.0f;
-        F32 container_height_pt = 300.0f;
-
-        // dip
-        V2 container_min_px     = V2{px_from_pt(container_min_pt.x), px_from_pt(container_min_pt.y)};
-        F32 container_width_px  = px_from_pt(container_width_pt);
-        F32 container_height_px = px_from_pt(container_height_pt);
-        V2 container_dim_px = {container_width_px, container_height_px};
-
-
-        // @Todo(lsw): (container_dimension_pt, basleine _pt, string) -> (atlas, uv per glyph, series_of_pt_coordinate_per_glyph)
-        // 1. Set rules of coordinate system. (O)
-        // 2. Tackle series_of_pt_coordinate_per_glyph first.
-
+        V2 container_origin_px = V2{100.0f, 700.0f}; // minx, maxy
+#if 1
+        local_persist F32 time = 0.0f;
+        time += (F32)dt;
+        F32 s = (sinf(time) * 0.5f + 0.5f) * 300.0f;
+        F32 container_width_px = s;
+        F32 container_height_px = s;
+#else
+        F32 container_width_px = 600.0f;
+        F32 container_height_px = 215.0f;
+#endif
 
         if (glyph_runs)
         { arrfree(glyph_runs); }
         glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
 
-        if (glyph_cels)
-        { arrsetlen(glyph_cels, 0); }
+        
 
         U64 run_count = arrlenu(glyph_runs);
         for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[run_idx];
-            U32 glyph_count = run.glyphCount;
             IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
 
-
-            assert(hmgeti(dwrite_font_hash_table, (U64)font_face));
+            assert(hmgeti(dwrite_font_hash_table, (U64)font_face) != -1);
             Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, (U64)font_face);
-
 
             // @Note(lsw): Create rendering mode of a font face.
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
@@ -484,410 +672,119 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
             if (hmgeti(atlas_hash_table_out, (U64)font_face) != -1/*exists*/)
             {
                 Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
-
-                // @Todo(lsw): Cleanup.
-                for (U32 i = 0; i < glyph_count; ++i)
-                {
-                    U16 glyph_index = run.glyphIndices[i];
-
-                    if (hmgeti(*hash_table_in, glyph_index) == -1) // glyph index doesn't exist in the inner-table
-                    {
-                        // Get single glyph's metrics.
-                        DWRITE_GLYPH_METRICS metrics = {};
-                        win32_assume_hr(font_face->GetDesignGlyphMetrics(&glyph_index, 1, &metrics, run.isSideways));
-
-                        // Calc blackbox of a glyph.
-                        F32 bb_width_em = (FLOAT)(metrics.advanceWidth - metrics.leftSideBearing - metrics.rightSideBearing) / font_metrics.du_per_em;
-                        F32 bb_height_em = (FLOAT)(metrics.advanceHeight - metrics.topSideBearing - metrics.bottomSideBearing) / font_metrics.du_per_em;
-                        F32 bb_width_pt = bb_width_em * pt_per_em;
-                        F32 bb_height_pt = bb_height_em * pt_per_em;
-
-                        // CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
-                        // We won't bother big glyphs. (many hundreds of pt)
-                        if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
-                        { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
-
-                        DWRITE_GLYPH_RUN single_glyph_run = {};
-                        {
-                            single_glyph_run.fontFace      = font_face;
-                            single_glyph_run.fontEmSize    = run.fontEmSize;
-                            single_glyph_run.glyphCount    = 1;
-                            single_glyph_run.glyphIndices  = &glyph_index;
-                            single_glyph_run.glyphAdvances = NULL;
-                            single_glyph_run.glyphOffsets  = NULL;
-                            single_glyph_run.isSideways    = run.isSideways;
-                            single_glyph_run.bidiLevel     = run.bidiLevel;
-                        }
-
-                        IDWriteGlyphRunAnalysis *analysis = NULL;
-                        win32_assume_hr(dwrite_factory->CreateGlyphRunAnalysis(&single_glyph_run,
-                                                                               NULL, // transform
-                                                                               rendering_mode,
-                                                                               measuring_mode,
-                                                                               grid_fit_mode,
-                                                                               is_cleartype ? DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE : DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-                                                                               0.0f, // baselineOriginX
-                                                                               0.0f, // baselineOriginY
-                                                                               &analysis));
-
-                        RECT bounds = {};
-                        hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
-                        if (FAILED(hr))
-                        {
-                            // @Todo: The font doesn't support DWRITE_TEXTURE_CLEARTYPE_3x1.
-                            // Retry with DWRITE_TEXTURE_ALIASED_1x1.
-                            assume(! "x");
-                        }
-
-                        U32 bitmap_width  = bounds.right - bounds.left;
-                        U32 bitmap_height = bounds.bottom - bounds.top;
-                        U32 bitmap_pitch  = is_cleartype ?  bitmap_width << 2 : bitmap_width;
-                        U32 bitmap_size   = bitmap_pitch * bitmap_height;
-
-                        if (bitmap_width == 0 || bitmap_height == 0)
-                        {
-                            // @Todo: Skip bitmap generation if empty.
-                            assume(! "x");
-                        }
-                        else
-                        {
-                            U8 *bitmap_data_rgb = new U8[bitmap_size];
-                            win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_rgb, bitmap_size));
-
-                            B32 fit = false;
-                            U32 x1, y1, x2, y2;
-
-                            F32 width_px, height_px;
-
-                            for (Binpack *partition = atlas_partition_sentinel->next;
-                                 partition != atlas_partition_sentinel;
-                                 partition = partition->next)
-                            {
-                                if (!partition->occupied)
-                                {
-                                    U32 w1 = partition->w;
-                                    U32 h1 = partition->h;
-                                    U32 w2 = bitmap_width;
-                                    U32 h2 = bitmap_height;
-                                    width_px = (F32)bitmap_width;
-                                    height_px = (F32)bitmap_height;
-
-                                    if (w1 >= w2 && h1 >= h2)
-                                    {
-                                        x1 = partition->x;
-                                        y1 = partition->y;
-                                        x2 = x1 + w2;
-                                        y2 = y1 + h2;
-                                        fit = true;
-
-                                        U32 dx[3] = {w2, 0, w2};
-                                        U32 dy[3] = {0, h2, h2};
-                                        U32 nw[3] = {w1-w2, w2, w1-w2};
-                                        U32 nh[3] = {h2, h1-h2, h1-h2};
-
-                                        for (U32 npi = 0; npi < 3; ++npi)
-                                        {
-                                            Binpack *new_partition = new Binpack;
-                                            new_partition->occupied = false;
-                                            new_partition->x = x1 + dx[npi];
-                                            new_partition->y = y1 + dy[npi];
-                                            new_partition->w = nw[npi];
-                                            new_partition->h = nh[npi];
-                                            dll_append(atlas_partition_sentinel, new_partition);
-                                        }
-
-                                        partition->occupied = true;
-                                        partition->w = w2;
-                                        partition->h = h2;
-
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (fit)
-                            {
-                                // RGB to RGBA
-                                for (UINT32 r = 0; r < bitmap_height; ++r)
-                                {
-                                    for (UINT32 c = 0; c < bitmap_width; ++c)
-                                    {
-                                        BYTE *dst = atlas_data + (y1+r)*atlas_pitch + (x1+c)*4;
-                                        BYTE *src = bitmap_data_rgb + r*bitmap_width*3 + c*3;
-                                        *(UINT32 *)dst = *(UINT32 *)src;
-                                        if (src[0] == 0 && src[1] == 0  && src[2] == 0)
-                                        { dst[3] = 0x00; }
-                                        else
-                                        { dst[3] = 0xff; }
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                assume(! "x");
-                            }
-
-                            delete [] bitmap_data_rgb;
-
-                            Glyph_Cel cel = {};
-                            {
-                                cel.uv_min = {(F32)x1 / (F32)atlas_width, (F32)y1 / (F32)atlas_height};
-                                cel.uv_max = {(F32)x2 / (F32)atlas_width, (F32)y2 / (F32)atlas_height};
-                                cel.width_px = width_px;
-                                cel.height_px = height_px;
-                                cel.offset.x = px_from_pt((F32)metrics.leftSideBearing / font_metrics.du_per_em * run.fontEmSize);
-                                cel.offset.y = px_from_pt((F32)metrics.topSideBearing / font_metrics.du_per_em * run.fontEmSize);
-                            }
-
-                            hmput(*hash_table_in, glyph_index, cel);
-                            arrput(glyph_cels, cel);
-                        }
-
-                        analysis->Release();
-                    }
-                    else  // glyph index exists in the inner-table
-                    {
-                        Glyph_Cel cel = hmget(*hash_table_in, glyph_index);
-                        arrput(glyph_cels, cel);
-                    }
-                }
+                dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
+                                                                   rendering_mode, measuring_mode, grid_fit_mode,
+                                                                   hash_table_in, atlas, atlas_partition_sentinel, glyph_cels);
             }
             else // font face doesn't exist in the outer-table
             {
-#if 0
                 Dwrite_Inner_Hash_Table **hash_table_in = new Dwrite_Inner_Hash_Table *;
                 *hash_table_in = NULL;
                 hmput(atlas_hash_table_out, (U64)font_face, hash_table_in);
-
-                for (U32 i = 0; i < glyph_count; ++i)
-                {
-                    U16 glyph_index = run_wrapper.indices[i];
-                    U128 uvs = {};
-
-                    if (hmgeti(*hash_table_in, glyph_index) == -1) // glyph index doesn't exist in the inner-table
-                    {
-                        // Get single glyph's metrics.
-                        DWRITE_GLYPH_METRICS metrics = {};
-                        win32_assume_hr(font_face->GetDesignGlyphMetrics(&glyph_index, 1, &metrics, run.isSideways));
-
-                        // Get blackbox of a glyph.
-                        assume(run_wrapper.design_units_per_em != 0);
-                        FLOAT bb_width_em = (FLOAT)(metrics.advanceWidth - metrics.leftSideBearing - metrics.rightSideBearing) / run_wrapper.design_units_per_em;
-                        FLOAT bb_height_em = (FLOAT)(metrics.advanceHeight - metrics.topSideBearing - metrics.bottomSideBearing) / run_wrapper.design_units_per_em;
-                        FLOAT pt_per_em = run.fontEmSize;
-                        FLOAT bb_width_pt = bb_width_em * pt_per_em;
-                        FLOAT bb_height_pt = bb_height_em * pt_per_em;
-
-                        // CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
-                        // We won't bother big glyphs. (many hundreds of pt)
-                        if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
-                        { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
-
-                        DWRITE_GLYPH_RUN single_glyph_run = {};
-                        {
-                            single_glyph_run.fontFace      = font_face;
-                            single_glyph_run.fontEmSize    = run.fontEmSize;
-                            single_glyph_run.glyphCount    = 1;
-                            single_glyph_run.glyphIndices  = &glyph_index;
-                            single_glyph_run.glyphAdvances = NULL;
-                            single_glyph_run.glyphOffsets  = NULL;
-                            single_glyph_run.isSideways    = run.isSideways;
-                            single_glyph_run.bidiLevel     = run.bidiLevel;
-                        }
-
-                        IDWriteGlyphRunAnalysis *analysis = NULL;
-                        win32_assume_hr(dwrite_factory->CreateGlyphRunAnalysis(&single_glyph_run,
-                                                                               NULL, // transform
-                                                                               rendering_mode,
-                                                                               measuring_mode,
-                                                                               grid_fit_mode,
-                                                                               is_cleartype ? DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE : DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-                                                                               0.0f, // baselineOriginX
-                                                                               0.0f, // baselineOriginY
-                                                                               &analysis));
-
-                        RECT bounds = {};
-                        hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
-                        if (FAILED(hr))
-                        {
-                            // @Todo: The font doesn't support DWRITE_TEXTURE_CLEARTYPE_3x1.
-                            // Retry with DWRITE_TEXTURE_ALIASED_1x1.
-                            assume(! "x");
-                        }
-
-                        U32 bitmap_width  = bounds.right - bounds.left;
-                        U32 bitmap_height = bounds.bottom - bounds.top;
-                        U32 bitmap_pitch  = is_cleartype ?  bitmap_width << 2 : bitmap_width;
-                        U32 bitmap_size   = bitmap_pitch * bitmap_height;
-
-                        if (bitmap_width == 0 || bitmap_height == 0)
-                        {
-                            // @Todo: Skip bitmap generation if empty.
-                            assume(! "x");
-                        }
-                        else
-                        {
-                            U8 *bitmap_data_rgb = new U8[bitmap_size];
-                            win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_rgb, bitmap_size));
-
-                            B32 fit = false;
-                            U32 x1, y1, x2, y2;
-                            F32 width_px, height_px;
-
-                            for (Binpack *partition = atlas_partition_sentinel->next;
-                                 partition != atlas_partition_sentinel;
-                                 partition = partition->next)
-                            {
-                                if (!partition->occupied)
-                                {
-                                    U32 w1 = partition->w;
-                                    U32 h1 = partition->h;
-                                    U32 w2 = bitmap_width;
-                                    U32 h2 = bitmap_height;
-                                    width_px = (F32)bitmap_width;
-                                    height_px = (F32)bitmap_height;
-
-                                    if (w1 >= w2 && h1 >= h2)
-                                    {
-                                        x1 = partition->x;
-                                        y1 = partition->y;
-                                        x2 = x1 + w2;
-                                        y2 = y1 + h2;
-                                        fit = true;
-
-                                        U32 dx[3] = {w2, 0, w2};
-                                        U32 dy[3] = {0, h2, h2};
-                                        U32 nw[3] = {w1-w2, w2, w1-w2};
-                                        U32 nh[3] = {h2, h1-h2, h1-h2};
-
-                                        for (U32 npi = 0; npi < 3; ++npi)
-                                        {
-                                            Binpack *new_partition = new Binpack;
-                                            new_partition->occupied = false;
-                                            new_partition->x = x1 + dx[npi];
-                                            new_partition->y = y1 + dy[npi];
-                                            new_partition->w = nw[npi];
-                                            new_partition->h = nh[npi];
-                                            dll_append(atlas_partition_sentinel, new_partition);
-                                        }
-
-                                        partition->occupied = true;
-                                        partition->w = w2;
-                                        partition->h = h2;
-
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (fit)
-                            {
-                                // RGB to RGBA
-                                for (UINT32 r = 0; r < bitmap_height; ++r)
-                                {
-                                    for (UINT32 c = 0; c < bitmap_width; ++c)
-                                    {
-                                        BYTE *dst = atlas_data + (y1+r)*atlas_pitch + (x1+c)*4;
-                                        BYTE *src = bitmap_data_rgb + r*bitmap_width*3 + c*3;
-                                        *(UINT32 *)dst = *(UINT32 *)src;
-                                        if (src[0] == 0 && src[1] == 0  && src[2] == 0)
-                                        { dst[3] = 0x00; }
-                                        else
-                                        { dst[3] = 0xff; }
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                assume(! "x");
-                            }
-
-                            delete [] bitmap_data_rgb;
-
-                            Glyph_Cel cel = {};
-                            {
-                                cel.uv_min = {(F32)x1 / (F32)atlas_width, (F32)y1 / (F32)atlas_height};
-                                cel.uv_max = {(F32)x2 / (F32)atlas_width, (F32)y2 / (F32)atlas_height};
-                                cel.width_px = width_px;
-                                cel.height_px = height_px;
-                                cel.offset.x = px_from_pt((F32)metrics.leftSideBearing / run_wrapper.design_units_per_em * run.fontEmSize);
-                                cel.offset.y = px_from_pt((F32)metrics.topSideBearing / run_wrapper.design_units_per_em * run.fontEmSize);
-                            }
-                            hmput(*hash_table_in, glyph_index, cel);
-                            arrput(glyph_cels, cel);
-                        }
-
-                        analysis->Release();
-                    }
-                    else  // glyph index exists in the inner-table
-                    {
-                        Glyph_Cel cel = hmget(*hash_table_in, glyph_index);
-                        arrput(glyph_cels, cel);
-                    }
-                }
-#endif
+                dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
+                                                                   rendering_mode, measuring_mode, grid_fit_mode,
+                                                                   hash_table_in, atlas, atlas_partition_sentinel, glyph_cels);
             }
         }
 
         // -----------------------------------------
         // @Note: Render text per container.
 
-#if 0
-        V2 offset_pt = {100.0f, 300.0f}; 
-        V2 offset_px = px_from_pt(offset_pt);
+        F32 max_vertical_advance_px = 0.0f;
+        for (U32 ri = 0; ri < run_count; ++ri)
+        {
+            DWRITE_GLYPH_RUN run = glyph_runs[ri];
+            assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
+            max_vertical_advance_px = max(max_vertical_advance_px, hmget(dwrite_font_hash_table, run.fontFace).vertical_advance_px);
+        }
 
-        static F32 time = 0.0f;
+        V2 origin_local_px = {};
+        V2 origin_translate_px = container_origin_px;
+        origin_translate_px.y -= max_vertical_advance_px;
 
-        V2 origin_pt = {};
+        { // @Temporary: Draw container
+            V2 min_x = container_origin_px + V2{0.0f, -container_height_px};
+            V2 max_x = min_x + V2{container_width_px, container_height_px}; 
+            render_quad_px_min_max(min_x, max_x);
+        }
 
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
 
+            assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
+            Dwrite_Font_Metrics metrics = hmget(dwrite_font_hash_table, run.fontFace);
+            F32 vertical_advance_px = metrics.vertical_advance_px;
+
             U64 glyph_count = arrlenu(run.glyphIndices);
             for (U32 gi = 0; gi < glyph_count; ++gi)
             {
-                F32 advance_pt = run_wrapper.advances[gi];
+                Glyph_Cel cel = glyph_cels[gi];
+                F32 advance_x_px = run.glyphAdvances[gi];
 
-                if (gi < glyph_count - 1)
+                // If not empty glyph,
+                if (cel.width_px != 0.0f && cel.height_px != 0.0f)
                 {
-                    F32 next_glyph_advance = run_wrapper.advances[gi + 1];
-
-                    if (origin_pt.x + advance_pt + next_glyph_advance /*@Todo: - next_rsb*/ > container_width_pt)
+                    // Line wrapping
+                    if (gi < glyph_count - 1)
                     {
-                        origin_pt.x = 0.0f;
-                        origin_pt.y -= run_wrapper.vertical_advance_pt;
+                        Glyph_Cel next_glyph_cel = glyph_cels[gi + 1];
+                        F32 next_baseline = origin_local_px.x + advance_x_px;
+                        F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_glyph_cel.offset_px.x + next_glyph_cel.width_px;
+                        if (next_glyph_blackbox_end_px >= container_width_px)
+                        {
+                            origin_local_px.x = 0.0f;
+                            origin_local_px.y -= vertical_advance_px;
+                        }
+                    }
+
+                    // Translate to global(container) coordinates.
+                    V2 origin_global_px = origin_local_px + origin_translate_px;
+                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+
+                    V2 min_px, max_px;
+                    min_px = max_px = origin_global_px;
+                    min_px.x += cel.offset_px.x;
+                    max_px.x += cel.offset_px.x + cel.width_px;
+                    max_px.y += cel.offset_px.y;
+                    min_px.y = max_px.y - cel.height_px;
+
+                    V2 uv_min = {cel.uv_min.x, cel.uv_max.y};
+                    V2 uv_max = {cel.uv_max.x, cel.uv_min.y};
+
+                    // Culling by Minkowski Sum.
+                    F32 add_w  = 0.5f*cel.width_px;
+                    F32 add_h  = 0.5f*cel.height_px;
+                    F32 left   = container_origin_px.x - add_w;
+                    F32 right  = container_origin_px.x + container_width_px + add_w;
+                    F32 top    = container_origin_px.y + add_h;
+                    F32 bottom = container_origin_px.y - container_height_px - add_h;
+                    F32 cen_x = min_px.x + add_w;
+                    F32 cen_y = min_px.y + add_h;
+                    if (cen_x > left && cen_x < right && cen_y > bottom && cen_y < top)
+                    {
+                        // Partially render glyphs crossing bottom line.
+                        if (cen_y < bottom + cel.height_px)
+                        {
+                            min_px.y = bottom + add_h;
+                            F32 n = 1.0f - ((max_px.y - min_px.y) / cel.height_px);
+                            F32 dv = (uv_min.y - uv_max.y);
+                            uv_min.y -= dv*n;
+                        }
+                        render_texture(min_px, max_px, uv_min, uv_max); 
                     }
                 }
 
-                Glyph_Cel cel = glyph_cels[gi];
-
-                V2 origin_px = px_from_pt(origin_pt + offset_pt);
-                V2 min_px = origin_px;
-                {
-                    min_px.x += cel.offset.x;
-                    //min_px.y += cel.offset.y;
-                }
-                V2 max_px = min_px;
-                {
-                    max_px.x += cel.width_px;
-                    max_px.y += cel.height_px;
-                }
-
-                V2 uv_min = {cel.uv_min.x, cel.uv_max.y};
-                V2 uv_max = {cel.uv_max.x, cel.uv_min.y};
-
-                render_texture(min_px, max_px, uv_min, uv_max);
-
-                origin_pt.x += advance_pt;
+                // Advance
+                origin_local_px.x += advance_x_px;
             }
         }
-#endif
 
         // -----------------------
         // @Note: D3D11 Pass
 
-        // @Temporary(lsw)
+        // @Temporary:
         for (U32 i = 0; i < renderer.vertex_count; ++i)
         {
             renderer.vertices[i].pos.x = (renderer.vertices[i].pos.x * 2.0f / window_width) - 1.0f;
@@ -916,15 +813,15 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         // @Note: Update atlas.
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
-            d3d11.device_ctx->Map(atlas, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(atlas_data, mapped_subresource.pData, sizeof(atlas_data[0])*atlas_pitch*atlas_height);
-            d3d11.device_ctx->Unmap(atlas, 0);
+            d3d11.device_ctx->Map(d3d_atlas, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
+            memory_copy(atlas.data, mapped_subresource.pData, sizeof(atlas.data[0])*atlas.pitch*atlas.height);
+            d3d11.device_ctx->Unmap(d3d_atlas, 0);
         }
 
 
 
 
-        FLOAT background_color[4] = {0.1f, 0.1f, 0.1f,1.0f};
+        FLOAT background_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 
         D3D11_VIEWPORT viewport = {};
@@ -947,19 +844,28 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*hprevinst*/, PWSTR /*pCmdLine*/, int /*nCm
         d3d11.device_ctx->IASetInputLayout(input_layout);
         d3d11.device_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        d3d11.device_ctx->VSSetShader(vertex_shader, NULL, 0);
+        { // Panel shader
+            d3d11.device_ctx->VSSetShader(panel_vs, NULL, 0);
+            d3d11.device_ctx->PSSetShader(panel_ps, NULL, 0);
 
-        d3d11.device_ctx->PSSetShader(pixel_shader, NULL, 0);
-#if 1
-        d3d11.device_ctx->PSSetShaderResources(0, 1, &texture_view);
-        d3d11.device_ctx->PSSetSamplers(0, 1, &sampler_state);
-#endif
+            d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
+            d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
-        d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
-        d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
+            d3d11.device_ctx->DrawIndexed(6, 0/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+        }
 
+        { // Glyph shader
+            d3d11.device_ctx->VSSetShader(vertex_shader, NULL, 0);
+            d3d11.device_ctx->PSSetShader(pixel_shader, NULL, 0);
 
-        d3d11.device_ctx->DrawIndexed(renderer.index_count, 0, 0);
+            d3d11.device_ctx->PSSetShaderResources(0, 1, &texture_view);
+            d3d11.device_ctx->PSSetSamplers(0, 1, &sampler_state);
+
+            d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
+            d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
+
+            d3d11.device_ctx->DrawIndexed(renderer.index_count - 6, 6/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+        }
 
         d3d11.swapchain->Present(1, 0);
     }

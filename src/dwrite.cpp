@@ -4,7 +4,7 @@
 static Dwrite_Map_Complexity_Result
 dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
                       IDWriteFontFace *font_face,
-                      WCHAR *text, UINT32 text_length)
+                      WCHAR *text, U32 text_length)
 {
     Dwrite_Map_Complexity_Result result = {};
 
@@ -30,7 +30,7 @@ static Dwrite_Font_Fallback_Result
 dwrite_font_fallback(IDWriteFontFallback1 *font_fallback,
                          IDWriteFontCollection *font_collection,
                          WCHAR *base_family, WCHAR *locale,
-                         WCHAR *text, UINT32 text_length)
+                         WCHAR *text, U32 text_length)
 {
     Dwrite_Font_Fallback_Result result = {};
 
@@ -50,32 +50,15 @@ dwrite_font_fallback(IDWriteFontFallback1 *font_fallback,
     return result;
 }
 
-static void
-dwrite_update_font_hash_table(IDWriteFontFace5 *font_face, F32 pt_per_em)
-{
-    // @Important: Must not free a font face for this to work.
-    if (hmgeti(dwrite_font_hash_table, (U64)font_face) == -1) // !exists
-    {
-        DWRITE_FONT_METRICS dfm = {};
-        font_face->GetMetrics(&dfm);
-
-        Dwrite_Font_Metrics metrics = {};
-        metrics.du_per_em = dfm.designUnitsPerEm;
-        F32 em_per_du = (1.0f / (F32)dfm.designUnitsPerEm);
-        metrics.vertical_advance_pt = (F32)(dfm.ascent + dfm.descent + dfm.lineGap) * em_per_du * pt_per_em;
-
-        hmput(dwrite_font_hash_table, (U64)font_face, metrics);
-    }
-};
-
 static DWRITE_GLYPH_RUN *
 dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                           IDWriteFontCollection *font_collection,
                           IDWriteTextAnalyzer1 *text_analyzer,
                           WCHAR *locale, WCHAR *base_family,
-                          FLOAT pt_per_em, WCHAR *text, UINT32 text_length)
+                          FLOAT pt_per_em, WCHAR *text, U32 text_length)
 {
     DWRITE_GLYPH_RUN *result = NULL;
+    F32 max_vertical_advance_px = 0.0f; // @Todo: return this
 
     HRESULT hr = S_OK;
 
@@ -88,7 +71,26 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         IDWriteFontFace5 *run_font_face = ff.font_face;
         assert(run_font_face);
 
-        dwrite_update_font_hash_table(run_font_face, pt_per_em);
+        DWRITE_FONT_METRICS dfm = {};
+        run_font_face->GetMetrics(&dfm);
+        F32 du_per_em = dfm.designUnitsPerEm;
+        F32 em_per_du = 1.0f / (F32)du_per_em;
+        F32 px_per_em = pt_per_em*1.333333f;
+        F32 px_per_du = px_per_em * em_per_du;
+
+        F32 vertical_advance_px = (F32)(dfm.ascent + dfm.descent + dfm.lineGap) * px_per_du;
+        max_vertical_advance_px = max(max_vertical_advance_px, vertical_advance_px);
+
+        // --------------------------------------------------------------------
+        // @Note: Put to hash table.
+        // @Important: Must not free a font face for this to work.
+        if (hmgeti(dwrite_font_hash_table, (U64)run_font_face) == -1) // !exists
+        {
+            Dwrite_Font_Metrics metrics = {};
+            metrics.du_per_em = du_per_em;
+            metrics.vertical_advance_px = vertical_advance_px;
+            hmput(dwrite_font_hash_table, (U64)run_font_face, metrics);
+        }
 
         U16 *indices                 = NULL;
         FLOAT *advances              = NULL;
@@ -96,10 +98,12 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
 
         // Segment the run once again with identical complexity.
         WCHAR *remain_text = text + offset;
-        for (U32 remain_length = run_length; remain_length > 0;)
+        U32 remain_length = run_length;
+        while (remain_length)
         {
             Dwrite_Map_Complexity_Result complexity = dwrite_map_complexity(text_analyzer, run_font_face, remain_text, remain_length);
 
+            
             if (complexity.is_simple)
             {
                 U32 glyph_count_add = complexity.mapped_length;
@@ -118,32 +122,36 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                 {
                     U32 idx = glyph_count_old + i;
                     indices[idx]  = complexity.glyph_indices[i];
-                    advances[idx] = advances_du[i] * pt_per_du; // @Todo: Unit?
+                    advances[idx] = advances_du[i] * px_per_em * em_per_du; // @Todo: Unit?
                     offsets[idx]  = {};
                 }
             }
-            else // !simple
+            else // complex
             {
-                WCHAR *text = remain_text;
                 U32 text_length = complexity.mapped_length;
 
-                // @Note: Split the text into runs of the same script ("language"), bidi, etc.
+                Dwrite_Text_Analysis_Source analysis_source = {locale, remain_text, text_length};
                 Dwrite_Text_Analysis_Sink analysis_sink = {};
-                Dwrite_Text_Analysis_Source analysis_source = {locale, text, text_length};
+                U16 *cluster_map = NULL;
+                DWRITE_SHAPING_TEXT_PROPERTIES *text_props = NULL;
+                DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props = NULL;
+
+                U32 current_glyph_count = (U32)arrlenu(indices);
+                U32 estimated_glyph_count_final = current_glyph_count + (3 * text_length) / 2 + 16;
+                arrsetlen(indices, estimated_glyph_count_final);
+                arrsetlen(advances, estimated_glyph_count_final);
+                arrsetlen(offsets, estimated_glyph_count_final);
+
+                // Split the text into runs of the same script ("language"), bidi, etc.
                 hr = text_analyzer->AnalyzeScript(&analysis_source, 0/*textPosition*/, text_length, &analysis_sink);
                 assume(SUCCEEDED(hr));
 
-                for (UINT32 i = 0; i < arrlenu(analysis_sink.results); ++i)
+                for (U32 i = 0; i < arrlenu(analysis_sink.results); ++i)
                 {
                     Dwrite_Text_Analysis_Sink_Result analysis_sink_result = analysis_sink.results[i];
 
-                    UINT16 *cluster_map = NULL;
-                    DWRITE_SHAPING_TEXT_PROPERTIES *text_props = NULL;
-                    DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props = NULL;
-
-                    UINT32 estimated_additional_glyph_count = (3 * analysis_sink_result.text_length / 2 + 16);
-                    UINT32 current_glyph_count = (UINT32)arrlenu(indices);
-                    UINT32 estimated_glyph_count = current_glyph_count + estimated_additional_glyph_count;
+                    U32 estimated_glyph_count_add = (3 * analysis_sink_result.text_length / 2 + 16);
+                    U32 estimated_glyph_count_next = current_glyph_count + estimated_glyph_count_add;
 
                     if (arrlenu(cluster_map) < analysis_sink_result.text_length)
                     {
@@ -151,43 +159,48 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                         arrsetlen(text_props, analysis_sink_result.text_length);
                     }
 
-                    UINT32 actual_additional_glyph_count = 0; 
+                    if (arrlenu(indices) < estimated_glyph_count_next)
+                    { arrsetlen(indices, estimated_glyph_count_next); }
 
-                    UINT32 retry_count = 0;
-                    while (retry_count < 4)
+                    if (arrlenu(glyph_props) < estimated_glyph_count_next)
+                    { arrsetlen(glyph_props, estimated_glyph_count_next); }
+
+                    U32 actual_glyph_count_add = 0; 
+
+                    U32 retry_count = 0;
+                    while (retry_count < 8)
                     {
-                        if (arrlenu(indices) < estimated_glyph_count)
-                        { arrsetlen(indices, estimated_glyph_count); }
-
-                        if (arrlenu(glyph_props) < estimated_glyph_count)
-                        { arrsetlen(glyph_props, estimated_glyph_count); }
-
-
-                        hr = text_analyzer->GetGlyphs(text + analysis_sink_result.text_position,
+                        hr = text_analyzer->GetGlyphs(remain_text + analysis_sink_result.text_position,
                                                       analysis_sink_result.text_length,
                                                       run_font_face,
                                                       FALSE,                       // isSideways
-                                                      FALSE,                       // isRightToLeft,
+                                                      0,                           // isRightToLeft,
                                                       &analysis_sink_result.analysis,
                                                       locale,
                                                       NULL,                        // numberSubstitution,
                                                       NULL,                        // features
                                                       NULL,                        // featureRangeLengths
                                                       0,                           // featureRanges
-                                                      estimated_additional_glyph_count,
+                                                      (U32)arrlenu(indices),
 
                                                       /* Out */
                                                       cluster_map,
                                                       text_props,
                                                       indices + current_glyph_count,
                                                       glyph_props,
-                                                      &actual_additional_glyph_count);
+                                                      &actual_glyph_count_add);
 
                         if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))
                         {
-                            estimated_additional_glyph_count *= 2;
-                            estimated_glyph_count = current_glyph_count + estimated_additional_glyph_count;
+                            estimated_glyph_count_add *= 2;
+                            estimated_glyph_count_next = current_glyph_count + estimated_glyph_count_add;
+                            arrsetlen(indices, estimated_glyph_count_next);
+                            arrsetlen(glyph_props, estimated_glyph_count_add);
                             retry_count++;
+                        }
+                        else if (FAILED(hr))
+                        {
+                            assume(! "x");
                         }
                         else
                         {
@@ -195,26 +208,25 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                         }
                     }
 
+                    U32 actual_glyph_count_next = current_glyph_count + actual_glyph_count_add;
+                    if (arrlenu(advances) < actual_glyph_count_next)
+                    {
+                        U64 size = (arrlenu(advances) << 1);
+                        size = max(size, actual_glyph_count_add);
+                        arrsetlen(advances, size);
+                    }
 
-                    UINT32 actual_new_glyph_count = current_glyph_count + actual_additional_glyph_count;
-                    arrsetlen(indices, actual_new_glyph_count);
-                    arrsetlen(advances, actual_new_glyph_count);
-                    arrsetlen(offsets, actual_new_glyph_count);
-
-                    for (UINT32 j = 0; j < actual_additional_glyph_count; ++j)
-                    { offsets[current_glyph_count + j] = {}; }
-
-                    hr = text_analyzer->GetGlyphPlacements(text + analysis_sink_result.text_position,
+                    hr = text_analyzer->GetGlyphPlacements(remain_text + analysis_sink_result.text_position,
                                                            cluster_map,
                                                            text_props,
                                                            analysis_sink_result.text_length,
                                                            indices + current_glyph_count,
                                                            glyph_props,
-                                                           actual_additional_glyph_count,
+                                                           actual_glyph_count_add,
                                                            run_font_face,
-                                                           pt_per_em,
+                                                           px_per_em,
                                                            FALSE, // isSideways
-                                                           FALSE, // isRightToLeft
+                                                           0,     // isRightToLeft
                                                            &analysis_sink_result.analysis,
                                                            locale,
                                                            NULL,  // features
@@ -222,17 +234,26 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                                                            0,     // featureRanges
 
                                                            /* out */
-                                                           advances + current_glyph_count, // @Todo: Unit consistency check.
+                                                           advances + current_glyph_count, // @Todo: Unit consistency.
                                                            offsets + current_glyph_count);
+
+                    assume(SUCCEEDED(hr));
+
+                    current_glyph_count = actual_glyph_count_next;
                 }
+
+                arrsetlen(indices, current_glyph_count);
+                arrsetlen(advances, current_glyph_count);
+                arrsetlen(offsets, current_glyph_count);
             }
 
             remain_text += complexity.mapped_length;
+            remain_length -= complexity.mapped_length;
         }
 
         DWRITE_GLYPH_RUN run = {};
         run.fontFace      = run_font_face;
-        run.fontEmSize    = px_from_pt(pt_per_em);
+        run.fontEmSize    = px_per_em;
         run.glyphCount    = (U32)arrlenu(indices);
         run.glyphIndices  = indices;
         run.glyphAdvances = advances;

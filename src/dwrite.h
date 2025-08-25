@@ -144,7 +144,7 @@ struct Glyph_Cel
     V2 uv_max;
     F32 width_px;
     F32 height_px;
-    V2 offset; // offset of a pen from baseline origin of a glyph in px.
+    V2 offset_px; // offset of a pen from baseline origin of a glyph in px.
 };
 
 typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
@@ -165,7 +165,7 @@ typedef struct Dwrite_Font_Metrics Dwrite_Font_Metrics;
 struct Dwrite_Font_Metrics
 {
     F32 du_per_em;
-    F32 vertical_advance_pt;
+    F32 vertical_advance_px;
 };
 
 typedef struct Dwrite_Font_Hash_Table Dwrite_Font_Hash_Table;
@@ -188,6 +188,8 @@ dwrite_font_fallback(IDWriteFontFallback *font_fallback,
                      WCHAR *text, UINT32 text_length);
 
 
-global Dwrite_Font_Hash_Table *dwrite_font_hash_table;
+// -------------------
+// @Note: Global Data.
+static Dwrite_Font_Hash_Table *dwrite_font_hash_table;
 
 #endif // LSW_DWRITE_H

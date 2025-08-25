@@ -18,6 +18,9 @@ pushd build
 call fxc /nologo /T vs_5_0 /E vs_main /O3 /WX /Fh ../src/shader_vs.h /Qstrip_reflect /Qstrip_debug /Qstrip_priv ../src/shader.hlsl
 call fxc /nologo /T ps_5_0 /E ps_main /O3 /WX /Fh ../src/shader_ps.h /Qstrip_reflect /Qstrip_debug /Qstrip_priv ../src/shader.hlsl
 
+call fxc /nologo /T vs_5_0 /E panel_vs_main /O3 /WX /Fh ../src/panel_vs.h /Qstrip_reflect /Qstrip_debug /Qstrip_priv ../src/panel.hlsl
+call fxc /nologo /T ps_5_0 /E panel_ps_main /O3 /WX /Fh ../src/panel_ps.h /Qstrip_reflect /Qstrip_debug /Qstrip_priv ../src/panel.hlsl
+
 :: Compile main.cpp
 call cl ..\src\main.cpp /Fe:main.exe %CFLAGS% /link %LFLAGS% %LIBS%
 

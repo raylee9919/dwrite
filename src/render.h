@@ -28,8 +28,8 @@
 
    --------------------------------------- */
 
-#define MAX_VERTEX_COUNT 1000
-#define MAX_INDEX_COUNT 1000
+#define MAX_VERTEX_COUNT    65536
+#define MAX_INDEX_COUNT     65536 
 
 typedef struct Vertex Vertex;
 struct Vertex 
@@ -46,10 +46,11 @@ struct Renderer
 
     U32 index_count = 0;
     U32 indices[MAX_INDEX_COUNT];
+
+    Bitmap white_bitmap;
 };
 
 static Renderer renderer;
-
 
 static void render_quad_px_min_max(V2 min, V2 max);
 

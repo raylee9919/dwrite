@@ -26,6 +26,16 @@ typedef float    F32;
 typedef double   F64;
 typedef union { U32 u32[4]; U64 u64[2]; } U128;
 
+typedef struct Bitmap Bitmap;
+struct Bitmap
+{
+    U32 width;
+    U32 height;
+    U32 pitch;
+    U32 size;
+    U8 *data;
+};
+
 
 // @Note: Macro-Functions
 #define assert(exp) do { if (!(exp)) __debugbreak(); } while(0)
@@ -35,6 +45,12 @@ typedef union { U32 u32[4]; U64 u64[2]; } U128;
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define memory_copy(src, dst, bytes) memcpy((void *)dst, (void *)src, bytes)
 #define quick_sort(ptr, count, each_size, comp) qsort(ptr, count, each_size, comp)
+
+#define KB(value) (   value  * 1024ll)
+#define MB(value) (KB(value) * 1024ll)
+#define GB(value) (MB(value) * 1024ll)
+#define TB(value) (GB(value) * 1024ll)
+
 
 // @Note: Data Structures
 #define dll_append(sentinel, item) {  \
