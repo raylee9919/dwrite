@@ -327,7 +327,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em = 20.0f;
+    F32 pt_per_em = 30.0f;
     F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -626,16 +626,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         // -----------------------------
         // @Note: Text container.
         V2 container_origin_px = V2{100.0f, 700.0f}; // minx, maxy
-#if 1
-        local_persist F32 time = 0.0f;
-        time += (F32)dt;
-        F32 s = (sinf(time) * 0.5f + 0.5f) * 300.0f;
-        F32 container_width_px = s;
-        F32 container_height_px = s;
-#else
-        F32 container_width_px = 600.0f;
-        F32 container_height_px = 215.0f;
-#endif
+        F32 container_width_px = 1000.0f;
+        F32 container_height_px = 300.0f;
 
         if (glyph_runs)
         { arrfree(glyph_runs); }
@@ -708,6 +700,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
             render_quad_px_min_max(min_x, max_x);
         }
 
+        // @Temporary:
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
@@ -764,12 +757,21 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
                     F32 cen_y = min_px.y + add_h;
                     if (cen_x > left && cen_x < right && cen_y > bottom && cen_y < top)
                     {
-                        // Partially render glyphs crossing bottom line.
+                        V2 min_px_original = min_px;
+                        V2 max_px_original = max_px;
+                        F32 dv = (uv_min.y - uv_max.y);
+                        F32 inverse_cel_height = 1.0f / cel.height_px;
+
+                        if (cen_y > top - cel.height_px)
+                        {
+                            max_px.y = container_origin_px.y;
+                            F32 n = 1.0f - ((max_px.y - min_px_original.y) * inverse_cel_height);
+                            uv_max.y += dv*n;
+                        }
                         if (cen_y < bottom + cel.height_px)
                         {
                             min_px.y = bottom + add_h;
-                            F32 n = 1.0f - ((max_px.y - min_px.y) / cel.height_px);
-                            F32 dv = (uv_min.y - uv_max.y);
+                            F32 n = 1.0f - ((max_px_original.y - min_px.y) * inverse_cel_height);
                             uv_min.y -= dv*n;
                         }
                         render_texture(min_px, max_px, uv_min, uv_max); 
@@ -821,7 +823,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
 
 
-        FLOAT background_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        FLOAT background_color[4] = {0.121568f, 0.125490f, 0.133333f, 1.0f};
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 
         D3D11_VIEWPORT viewport = {};

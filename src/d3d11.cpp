@@ -78,7 +78,7 @@ d3d11_create_swapchain_and_framebuffer(HWND hwnd)
     {
         swapchain_desc.Width              = 0; // Use window width and height.
         swapchain_desc.Height             = 0;
-        swapchain_desc.Format             = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        swapchain_desc.Format             = DXGI_FORMAT_B8G8R8A8_UNORM; // @Todo: SRGB?
         swapchain_desc.Stereo             = FALSE;
         swapchain_desc.BufferUsage        = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         swapchain_desc.BufferCount        = 2;
