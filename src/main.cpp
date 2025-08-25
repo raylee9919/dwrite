@@ -59,7 +59,7 @@
 
 #define win32_assume_hr(hr) assume(SUCCEEDED(hr))
 
-static BOOL g_running = TRUE;
+static B32 g_running = TRUE;
 
 static LRESULT CALLBACK
 win32_window_procedure(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -338,7 +338,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
-    WCHAR *base_font_family_name = L"Roboto Mono";
+    WCHAR *base_font_family_name = L"Consolas";
     U32 family_index = 0;
     BOOL family_exists = FALSE;
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
