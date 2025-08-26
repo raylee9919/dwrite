@@ -14,6 +14,7 @@ struct Arena
 
 
 static Arena arena_alloc(U64 size);
+#define arena_push_struct(arena, type) (type *)arena_push(arena, sizeof(type))
 #define arena_push_array(arena, type, count) (type *)arena_push(arena, sizeof(type)*count)
 static void *arena_push(Arena *arena, U64 size);
 static void arena_clear(Arena *arena);

@@ -280,9 +280,15 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
     }
 }
 
+#if 0
+int main(void)
+{
+    HINSTANCE hinst = GetModuleHandle(0);
+#else
 int WINAPI
 wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmdshow*/)
 {
+#endif
     HRESULT hr = S_OK;
 
     // @Note: Place this before creating window.
@@ -308,6 +314,12 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
                                 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                                 NULL, NULL, hinst, NULL);
     assume(hwnd);
+
+
+    // ------------------------------
+    // @Note: Permanent Arena.
+    Arena permanent_arena = arena_alloc(GB(2));
+
 
     // ------------------------------
     // @Note: Query QPC frequency.

@@ -45,6 +45,7 @@ struct Bitmap
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define memory_copy(src, dst, bytes) memcpy((void *)dst, (void *)src, bytes)
 #define quick_sort(ptr, count, each_size, comp) qsort(ptr, count, each_size, comp)
+#define offset_of(type, member) (&((((type) *)0)->(member)))
 
 #define KB(value) (   value  * 1024ll)
 #define MB(value) (KB(value) * 1024ll)

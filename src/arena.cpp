@@ -18,6 +18,10 @@ arena_push(Arena *arena, U64 size)
     void *result = (U8 *)arena->base + arena->used;
     arena->used += size;
 
+    // ZII
+    for (U64 i = 0; i < size; ++i)
+    { ((U8 *)result)[i] = 0; }
+
     return result;
 }
 
