@@ -30,7 +30,7 @@ list_sentinel_init(Arena *arena, U64 size)
     };                                                                              \
 }
 
-// @Note: Append
+// @Note: List/Append
 #define list_alloc_back(l) \
     ((decltype((l)->payload))_list_alloc_back((l)->arena, (l)->sentinel, sizeof(*(l)->payload)))
 
@@ -51,7 +51,7 @@ _list_alloc_back(Arena *arena, List_Node *sentinel, U64 data_size)
     return node->data;
 }
 
-// @Note: Prepend
+// @Note: List/Prepend
 #define list_alloc_front(l) \
     ((decltype((l)->payload))_list_alloc_front((l)->arena, (l)->sentinel, sizeof(*(l)->payload)))
 
@@ -72,7 +72,7 @@ _list_alloc_front(Arena *arena, List_Node *sentinel, U64 data_size)
     return node->data;
 }
 
-// @Note: Iterate
+// @Note: List/Iterate
 #define list_first_data(l) ( ( decltype((l)->payload) )((l)->sentinel->next != (l)->sentinel ? (l)->sentinel->next->data : NULL) ) 
 #define list_for(it, l) for ( decltype((l)->payload) it = list_first_data(l); \
                               it != NULL; \
@@ -91,14 +91,119 @@ list_next_data(List_Node *sentinel, void *data)
 
 // ------------------------------------- 
 // @Note: Hash_Table
-
-#define Hash_Table(type) Hash_Table(arena_init, type) struct {  \
-    Arena *arena = arena_init;                                  \
-    union {                                                     \
-        type *payload;                                          \
-    };                                                          \
+typedef U16 Hash_Table_Flags;
+enum
+{
+    HT_ENTRY_FILLED    = (1<<0),
+    HT_ENTRY_TOMBSTONE = (1<<1),
 };
 
+typedef struct Hash_Table_Entry Hash_Table_Entry;
+struct Hash_Table_Entry
+{
+    Hash_Table_Flags flags;
+    U8 key_val[];
+};
+
+function Hash_Table_Entry *
+ht_entries_init(Arena *arena, U64 total_size)
+{
+    Hash_Table_Entry *result = (Hash_Table_Entry *)arena_push(arena, total_size);
+    return result;
+}
+
+#define HT_ENTRY_COUNT 1024
+static_assert(is_power_of_two(HT_ENTRY_COUNT)); // @Note: Since we're using i*i as a probing function.
+
+#define Hash_Table(arena_init, key_type, val_type) struct { \
+    Arena *arena = arena_init; \
+    U64 entry_count = HT_ENTRY_COUNT; \
+    union { \
+        Hash_Table_Entry *entries = ht_entries_init(arena_init, (sizeof(Hash_Table_Entry)+sizeof(key_type)+sizeof(val_type))*HT_ENTRY_COUNT); \
+        key_type *key_payload; \
+        val_type *val_payload; \
+    }; \
+}
+
+function U64
+hash(U8 *data, U64 length)
+{
+    // @Todo: Better hash function.
+    int result = 0;
+    for (U64 i = 0; i < length; ++i)
+    {
+        result += data[i];
+    }
+    return result;
+}
+
+function U64
+ht_probing_function(U64 i)
+{
+    // @Todo: Better probing function.
+    return i*i;
+}
+
+function Hash_Table_Entry *
+ht_search_empty_entry(Hash_Table_Entry *entries, U64 entry_count, U64 entry_size, U64 home_position)
+{
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 probe = ht_probing_function(i); 
+        U64 index = (home_position + probe) % entry_count;
+        Hash_Table_Entry *entry = (Hash_Table_Entry *)((U8 *)entries + index*entry_size);
+        if (!(entry->flags & HT_ENTRY_FILLED)) // empty
+        {
+            return entry;
+        }
+    } 
+    return NULL;
+}
+
+function Hash_Table_Entry *
+ht_search(Hash_Table_Entry *entries, U64 entry_count, U64 entry_size, U64 home_position, U8 *key, U64 length)
+{
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 probe = ht_probing_function(i); 
+        U64 index = (home_position + probe) % entry_count;
+        Hash_Table_Entry *entry = (Hash_Table_Entry *)((U8 *)entries + index*entry_size);
+        if (!(entry->flags & HT_ENTRY_TOMBSTONE))
+        {
+            if (entry->flags & HT_ENTRY_FILLED)
+            {
+                for (U64 c = 0; c < length; ++c)
+                {
+                    if (string_equal(entry->key_val, key, length))
+                    {
+                        return entry;
+                    }
+                }
+            }
+            else
+            {
+                return NULL;
+            }
+        }
+    } 
+
+    assume(! "invalid code path.");
+}
+
+#define ht_insert(t, key, val) \
+{ \
+    decltype(key) _key = (key); \
+    U64 hashed = hash((U8 *)(&_key), sizeof(decltype(key))); \
+    U64 home_position = hashed % ((t)->entry_count); \
+    Hash_Table_Entry *entry = ht_search_empty_entry((t)->entries, (t)->entry_count, sizeof(Hash_Table_Entry)+sizeof(*(t)->key_payload)+sizeof(*(t)->val_payload), home_position); \
+    assume(entry); \
+    Hash_Table_Entry *header = (Hash_Table_Entry *)entry; \
+    header->flags |= HT_ENTRY_FILLED; \
+    decltype((t)->key_payload) key_ptr = (decltype((t)->key_payload))(entry + sizeof(Hash_Table_Entry)); \
+    decltype((t)->val_payload) val_ptr = (decltype((t)->val_payload))((U8 *)key_ptr + sizeof(*(t)->key_payload)); \
+    *key_ptr = key; \
+    *val_ptr = val; \
+}
 
 // ------------------------------------- 
 // @Note: Array

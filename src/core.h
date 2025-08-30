@@ -46,6 +46,7 @@ struct Bitmap
 #define memory_copy(src, dst, bytes) memcpy((void *)dst, (void *)src, bytes)
 #define quick_sort(ptr, count, each_size, comp) qsort(ptr, count, each_size, comp)
 #define offset_of(type, member) (&((((type) *)0)->(member)))
+#define is_power_of_two(x) (((x) & ((x) - 1)) == 0)
 
 #define KB(value) (   value  * 1024ll)
 #define MB(value) (KB(value) * 1024ll)
@@ -59,6 +60,19 @@ struct Bitmap
     item->prev = sentinel->prev;      \
     item->next = sentinel;            \
     sentinel->prev = item;            \
+}
+
+function B32
+string_equal(void *a, void *b, U64 len)
+{
+    U8 *x = (U8 *)a;
+    U8 *y = (U8 *)b;
+    for (U64 i = 0; i < len; ++i) {
+        if (x[i] != y[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 

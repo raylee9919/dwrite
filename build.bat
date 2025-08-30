@@ -7,7 +7,7 @@ where /q cl || (
     exit /b 1
 )
 
-set CFLAGS=/nologo /std:c++17 /Z7 /W4 /FC /utf-8 /DBUILD_DEBUG=1 /wd4100 /wd4457 /wd4200
+set CFLAGS=/nologo /std:c++17 /Z7 /W4 /FC /utf-8 /DBUILD_DEBUG=1 /wd4100 /wd4457 /wd4200 /wd4505
 set LFLAGS=/incremental:no
 set LIBS=user32.lib gdi32.lib dwrite.lib d3d11.lib d3dcompiler.lib
 

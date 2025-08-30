@@ -318,8 +318,20 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     // ------------------------------
     // @Note: Permanent Arena.
+    typedef struct
+    {
+        S32 x, y;
+    } Foo;
+    Foo a = {255, 19};
+    Foo b = {234, 31};
+    Foo c = {22, 29};
     Arena permanent_arena = arena_alloc(GB(2));
+    Hash_Table(&permanent_arena, S32, Foo) ht = {};
+    ht_insert(&ht, 12, a);
+    ht_insert(&ht, 12, b);
+    ht_insert(&ht, 12, c);
 
+    Foo *x = ht_get(&ht, 12);
 
     // ------------------------------
     // @Note: Query QPC frequency.
@@ -339,7 +351,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em = 30.0f;
+    F32 pt_per_em = 20.0f;
     F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
 
     IDWriteFactory3 *dwrite_factory = NULL;
