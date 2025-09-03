@@ -52,15 +52,17 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
 {
     HRESULT hr = S_OK;
 
+    Temporary_Arena scratch = scratch_begin();
+
     U64 glyph_count = arrlenu(run.glyphIndices);
     IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
     assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
     Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, run.fontFace);
 
-    F32 em_per_du = 1.0f / font_metrics.du_per_em;
-    F32 px_per_du = run.fontEmSize * em_per_du;
+    //F32 em_per_du = 1.0f / font_metrics.du_per_em;
+    //F32 px_per_du = run.fontEmSize * em_per_du;
 
-    DWRITE_TEXTURE_TYPE texture_type = is_cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
+    DWRITE_TEXTURE_TYPE texture_type = (is_cleartype) ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
 
     // Check if each glyph in the run exists in the inner hash table.
     for (U32 i = 0; i < glyph_count; ++i)
@@ -122,7 +124,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                 U32 bitmap_height = blackbox_height + 2*margin;
 
                 U32 rgb_bitmap_size = (is_cleartype) ? (blackbox_width*3)*blackbox_height : blackbox_width*blackbox_height; 
-                U8 *bitmap_data_rgb = new U8[rgb_bitmap_size];
+                U8 *bitmap_data_rgb = (U8 *)arena_push(scratch.arena, rgb_bitmap_size);
                 win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_rgb, rgb_bitmap_size));
 
                 B32 fit = false;
@@ -131,9 +133,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                 U32 x2 = 0;
                 U32 y2 = 0;
 
-                for (Bin *partition = atlas_partition_sentinel->next;
-                     partition != atlas_partition_sentinel;
-                     partition = partition->next)
+                dll_for(atlas_partition_sentinel, partition)
                 {
                     if (!partition->occupied)
                     {
@@ -197,14 +197,12 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                     assume(! "x");
                 }
 
-                delete [] bitmap_data_rgb;
-
                 cel.uv_min       = {(F32)(x1 + margin) / (F32)atlas.width, (F32)(y1 + margin) / (F32)atlas.height};
                 cel.uv_max       = {(F32)(x2 - margin) / (F32)atlas.width, (F32)(y2 - margin) / (F32)atlas.height};
                 cel.width_px     = (F32)blackbox_width;
                 cel.height_px    = (F32)blackbox_height;
-                cel.offset_px.x  = (F32)metrics.leftSideBearing * px_per_du;
-                cel.offset_px.y  = (F32)(metrics.verticalOriginY - metrics.topSideBearing) * px_per_du;
+                cel.offset_px.x  = (F32)bounds.left;
+                cel.offset_px.y  = (F32)bounds.bottom;
             }
             else
             {
@@ -227,6 +225,8 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
             darr_push(glyph_cels, cel);
         }
     }
+
+    scratch_end(scratch);
 }
 
 function int
@@ -239,9 +239,11 @@ main_entry(void)
     Os_Window *window = os_create_window(1920, 1080, L"Window,창,fönster,ﻧَﺎﻓِﺬَﺓ");
     assume(window);
 
+    Arena *permanent_arena = arena_alloc();
+
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em   = 20.0f;
+    F32 pt_per_em   = 81.0f;
     F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -297,12 +299,12 @@ main_entry(void)
         atlas.width  = 1024;
         atlas.height = 1024;
         atlas.pitch  = (atlas.width << 2);
-        atlas.data   = new U8[atlas.pitch*atlas.height];
+        atlas.data   = (U8 *)arena_push(permanent_arena, atlas.pitch*atlas.height);
     }
 
-    Bin *atlas_partition_sentinel = new Bin;
+    Bin *atlas_partition_sentinel = arena_push_struct(permanent_arena, Bin);
     {
-        Bin *head = new Bin;
+        Bin *head = arena_push_struct(permanent_arena, Bin);
         {
             head->prev = atlas_partition_sentinel;
             head->next = atlas_partition_sentinel;
@@ -413,15 +415,13 @@ main_entry(void)
     // @Note: Create Sampler State
     D3D11_SAMPLER_DESC sampler_desc = {};
     {
-        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_POINT;
+        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sampler_desc.AddressU       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressV       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressW       = D3D11_TEXTURE_ADDRESS_BORDER;
-        sampler_desc.BorderColor[0] = 1.0f;
-        sampler_desc.BorderColor[1] = 1.0f;
-        sampler_desc.BorderColor[2] = 1.0f;
-        sampler_desc.BorderColor[3] = 1.0f;
-        sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampler_desc.MaxAnisotropy  = 1;
+        sampler_desc.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+        sampler_desc.MaxLOD         = D3D11_FLOAT32_MAX;
     }
 
     ID3D11SamplerState* sampler_state;
@@ -493,15 +493,16 @@ main_entry(void)
         last_counter = li.QuadPart;
     }
 
-    WCHAR *text = new WCHAR[655356];
+    WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
     U32 text_length = 0;
 
-    text=L"“PIPPIN-> I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    //text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    text=L"->";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
     // @Note: Main Loop
-    Arena *frame_arena = arena_alloc(megabytes(64));
+    Arena *frame_arena = arena_alloc();
 
     while (! window->should_close)
     {
@@ -527,7 +528,7 @@ main_entry(void)
         last_counter = new_counter;
 
         char buf[256];
-        snprintf(buf, sizeof(buf), "fps: %d\n", (int)(1.0 / dt));
+        snprintf(buf, sizeof(buf), "dt: %.6f\n", dt);
         OutputDebugString(buf);
 
         static F64 time = 0.0;
@@ -547,13 +548,14 @@ main_entry(void)
         // -----------------------------
         // @Note: Text container.
         V2 container_origin_px  = V2{100.0f, 700.0f}; // minx, maxy
-        F32 container_width_px  = (sinf(time*0.7f)*0.5f+0.5f) * 1000.0f;
-        F32 container_height_px = (cosf(time*0.2f)*0.5f+0.5f) * 300.0f;
+        F32 container_width_px  = /*(sinf(time*0.7f)*0.5f+0.5f) * */1000.0f;
+        F32 container_height_px = /*(cosf(time*0.5f)*0.5f+0.5f) * */300.0f;
 
         if (glyph_runs)
-        { arrfree(glyph_runs); }
+        {
+            arrfree(glyph_runs); 
+        }
         glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
-
 
 
         U64 run_count = arrlenu(glyph_runs);
@@ -654,18 +656,19 @@ main_entry(void)
 
                     // Translate to global(container) coordinates.
                     V2 origin_global_px = origin_local_px + origin_translate_px;
-                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+                    {
+                        origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                        origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+                    }
 
                     V2 min_px, max_px;
-                    min_px = max_px = origin_global_px;
-                    min_px.x += cel.offset_px.x;
-                    max_px.x += cel.offset_px.x + cel.width_px;
-                    max_px.y += cel.offset_px.y;
-                    min_px.y = max_px.y - cel.height_px;
-
-                    V2 uv_min = {cel.uv_min.x, cel.uv_max.y};
-                    V2 uv_max = {cel.uv_max.x, cel.uv_min.y};
+                    {
+                        min_px = max_px = origin_global_px;
+                        min_px.x += cel.offset_px.x;
+                        max_px.x += cel.offset_px.x + cel.width_px;
+                        max_px.y += cel.offset_px.y;
+                        min_px.y = max_px.y - cel.height_px;
+                    }
 
                     // Culling/Clipping.
                     AABB2 box_container = AABB2{container_origin_px, container_origin_px};
@@ -674,15 +677,14 @@ main_entry(void)
                         box_container.max.x += container_width_px;
                     }
 
-                    AABB2 box_cel = AABB2{min_px, min_px};
-                    {
-                        box_cel.max += V2{cel.width_px, cel.height_px};
-                    }
+                    AABB2 box_cel = AABB2{min_px, max_px};
 
                     if (intersects(box_container, box_cel))
                     {
                         AABB2 overlap = intersection(box_container, box_cel);
 
+                        V2 uv_min      = V2{cel.uv_min.x, cel.uv_max.y};
+                        V2 uv_max      = V2{cel.uv_max.x, cel.uv_min.y};
                         V2 uv_range_x  = V2{cel.uv_min.x, cel.uv_max.x};
                         V2 uv_range_y  = V2{cel.uv_min.y, cel.uv_max.y};
                         V2 box_range_x = V2{box_cel.min.x, box_cel.max.x};
