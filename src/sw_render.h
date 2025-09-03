@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Seong Woo Lee. All rights reserved.
-#ifndef LSW_RENDER_H
-#define LSW_RENDER_H
+#ifndef RENDER_H
+#define RENDER_H
 
 /* --------------------------------------
    @Important:
@@ -46,13 +46,11 @@ struct Renderer
 
     U32 index_count = 0;
     U32 indices[MAX_INDEX_COUNT];
-
-    Bitmap white_bitmap;
 };
 
-static Renderer renderer;
+global Renderer renderer;
 
-static void render_quad_px_min_max(V2 min, V2 max);
+function void render_quad_px_min_max(V2 min, V2 max);
 
 
-#endif // LSW_RENDER_H
+#endif // RENDER_H

@@ -24,6 +24,6 @@ panel_vs_main(VS_Input input)
 float4
 panel_ps_main(VS_Output input) : SV_Target
 {
-    float4 result = float4(0.172549f, 0.207843f, 0.223529f, 1.0f);
+    float4 result = float4(0.2f,0.2f,0.2f,1);
     return result;
 }

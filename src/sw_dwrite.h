@@ -1,6 +1,15 @@
 #ifndef LSW_DWRITE_H
 #define LSW_DWRITE_H
 
+//----------------------------------------------
+// @Note: 
+// "dwrite_2.h" minimum: Windows 8.1
+// "dwrite_3.h" minimum: Windows 10 Build 16299
+
+#include <dwrite_3.h>
+
+#pragma comment(lib, "dwrite.lib")
+
 typedef struct Dwrite_Text_Analysis_Source Dwrite_Text_Analysis_Source;
 struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
 {
@@ -140,12 +149,13 @@ struct Dwrite_Map_Complexity_Result
 typedef struct Glyph_Cel Glyph_Cel;
 struct Glyph_Cel
 {
-    V2 uv_min;
-    V2 uv_max;
+    V2  uv_min;
+    V2  uv_max;
     F32 width_px;
     F32 height_px;
-    V2 offset_px; // offset of a pen from baseline origin of a glyph in px.
+    V2  offset_px; // offset of a pen from baseline origin of a glyph in px.
 };
+typedef Dynamic_Array(Glyph_Cel) Glyph_Cel_Array;
 
 typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
 struct Dwrite_Inner_Hash_Table

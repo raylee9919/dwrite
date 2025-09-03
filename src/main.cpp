@@ -1,84 +1,33 @@
 // Copyright (c) 2025 Seong Woo Lee. All rights reserved.
 
-// @Study:
-// COM, emSize
-// Can I release base interface once queried advanced version of it?
+#define OS_WINDOWS
+#include "include/codebase.h"
 
-// @Todo:
-// 1. When it comes to rasterization I'd first try and implement it without emoji support,
-// because emojis add some complexity that may be distracting initially (to be precisely, it requires a call to TranslateColorGlyphRun)
-// 
-// 2. Select Hashtable keys
-
-//----------------------------------------------
-// @Note: 
-// "dwrite_2.h" minimum: Windows 8.1
-// "dwrite_3.h" minimum: Windows 10 Build 16299
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#define UNICODE
-#define _UNICODE
-#include <windows.h>
-#include <dwrite_3.h> 
-#include <d3d11_1.h>
-#include <d3dcompiler.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-
-//--------------------
-// @Note: [.h]
-#include "core.h"
-#include "arena.h"
-#include "ds.h"
-#include "math.h"
+//------------------------------------
+// Note: [.h]
 #define STB_DS_IMPLEMENTATION
 #define STBDS_ASSERT
 #include "third_party/stb_ds.h"
-#include "dwrite.h"
-#include "d3d11.h"
-#include "render.h"
 
-//--------------------
-// @Note: [.cpp]
-#include "math.cpp"
-#include "arena.cpp"
-#include "dwrite.cpp"
-#include "d3d11.cpp"
-#include "render.cpp"
+#include "sw_dwrite.h"
+#include "sw_render.h"
 
-//--------------------
-// @Note: Generated HLSL byte code.
-#include "shader_vs.h"
-#include "shader_ps.h"
+//------------------------------------
+// Note: [.cpp]
+#include "sw_dwrite.cpp"
+#include "sw_render.cpp"
 
-#include "panel_vs.h"
-#include "panel_ps.h"
+//------------------------------------
+// Note: Generated HLSL byte code.
+#include "shaders/shader_vs.h"
+#include "shaders/shader_ps.h"
 
+#include "shaders/panel_vs.h"
+#include "shaders/panel_ps.h"
 
 #define win32_assume_hr(hr) assume(SUCCEEDED(hr))
 
-static B32 g_running = TRUE;
-
-static LRESULT CALLBACK
-win32_window_procedure(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    LRESULT result = 0;
-    switch (message)
-    {
-        case WM_CLOSE:
-        case WM_DESTROY: {
-            g_running = FALSE;
-            PostQuitMessage(0);
-        } break;
-
-        default: {
-            result = DefWindowProcW(hWnd, message, wParam, lParam);
-        }
-    }
-    return result;
-}
+global B32 should_accumulate_time = false;
 
 typedef struct Bin Bin;
 struct Bin
@@ -99,7 +48,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                                    Dwrite_Inner_Hash_Table **hash_table_in,
                                    Bitmap atlas,
                                    Bin *atlas_partition_sentinel,
-                                   Glyph_Cel *glyph_cels)
+                                   Glyph_Cel_Array *glyph_cels)
 {
     HRESULT hr = S_OK;
 
@@ -267,7 +216,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                 cel.offset_px.y  = 0.0f;
             }
 
-            array_push(glyph_cels, cel);
+            darr_push(glyph_cels, cel);
             hmput(*hash_table_in, glyph_index, cel);
 
             analysis->Release();
@@ -275,83 +224,24 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
         else  // glyph index exists in the inner-table
         {
             Glyph_Cel cel = hmget(*hash_table_in, glyph_index);
-            array_push(glyph_cels, cel);
+            darr_push(glyph_cels, cel);
         }
     }
 }
 
-#if 0
-int main(void)
+function int
+main_entry(void)
 {
-    HINSTANCE hinst = GetModuleHandle(0);
-#else
-int WINAPI
-wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmdshow*/)
-{
-#endif
     HRESULT hr = S_OK;
 
-    // @Note: Place this before creating window.
-    win32_assume_hr(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
+    F64 counter_frequency_inverse = (1.0 / (F64)os_query_timer_frequency());
 
-    WNDCLASSW wcex = {};
-    {
-        wcex.style              = CS_HREDRAW|CS_VREDRAW|CS_OWNDC;
-        wcex.lpfnWndProc        = win32_window_procedure;
-        wcex.cbClsExtra         = 0;
-        wcex.cbWndExtra         = 0;
-        wcex.hInstance          = hinst;
-        wcex.hIcon              = NULL;
-        wcex.hCursor            = LoadCursor(hinst, IDC_ARROW);
-        wcex.hbrBackground      = (HBRUSH)GetStockObject(BLACK_BRUSH);
-        wcex.lpszMenuName       = NULL;
-        wcex.lpszClassName      = L"DirectWriteExampleClass";
-    }
-    assume(RegisterClassW(&wcex));
-
-    HWND hwnd = CreateWindowExW(0/*style->DWORD*/, wcex.lpszClassName, L"DirectWrite",
-                                WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                                NULL, NULL, hinst, NULL);
-    assume(hwnd);
-
-
-    // ------------------------------
-    // @Note: Permanent Arena.
-    typedef struct
-    {
-        S32 x, y;
-    } Foo;
-    Foo a = {255, 19};
-    Foo b = {234, 31};
-    Foo c = {22, 29};
-    Arena permanent_arena = arena_alloc(GB(2));
-    Hash_Table(&permanent_arena, S32, Foo) ht = {};
-    ht_insert(&ht, 12, a);
-    ht_insert(&ht, 12, b);
-    ht_insert(&ht, 12, c);
-
-    Foo *x = ht_get(&ht, 12);
-
-    // ------------------------------
-    // @Note: Query QPC frequency.
-    F64 counter_frequency_inverse;
-    {
-        LARGE_INTEGER li = {};
-        QueryPerformanceFrequency(&li);
-        counter_frequency_inverse = (1.0 / (F64)li.QuadPart);
-    }
-
-    // -----------------------------
-    // @Note: D3D
-    d3d11_init();
-    d3d11_create_swapchain_and_framebuffer(hwnd);
-
-
+    Os_Window *window = os_create_window(1920, 1080, L"Window,창,fönster,ﻧَﺎﻓِﺬَﺓ");
+    assume(window);
 
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em = 20.0f;
+    F32 pt_per_em   = 20.0f;
     F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -362,7 +252,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
-    WCHAR *base_font_family_name = L"Consolas";
+    WCHAR *base_font_family_name = L"Fira Code";
     U32 family_index = 0;
     BOOL family_exists = FALSE;
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
@@ -389,7 +279,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
     WCHAR locale[LOCALE_NAME_MAX_LENGTH]; // LOCALE_NAME_MAX_LENGTH includes a terminating null character.
     if (! GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH))
-    { memory_copy(L"en-US", locale, sizeof(L"en-US")); }
+    { memory_copy(locale, L"en-US", sizeof(L"en-US")); }
 
 
 
@@ -407,8 +297,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         atlas.width  = 1024;
         atlas.height = 1024;
         atlas.pitch  = (atlas.width << 2);
-        atlas.size   = atlas.pitch*atlas.height;
-        atlas.data   = new U8[atlas.size];
+        atlas.data   = new U8[atlas.pitch*atlas.height];
     }
 
     Bin *atlas_partition_sentinel = new Bin;
@@ -426,6 +315,11 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         atlas_partition_sentinel->prev = head;
         atlas_partition_sentinel->next = head;
     }
+
+
+    // -----------------------------
+    // @Note: Initialize Renderer
+    d3d11_init((HWND)window->handle.u64);
 
 
 
@@ -461,10 +355,9 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
     }
 
 
-    RECT window_rect = {};
-    GetClientRect(hwnd, &window_rect);
-    U32 window_width  = (window_rect.right - window_rect.left);
-    U32 window_height = (window_rect.bottom - window_rect.top);
+    V2U client_size   = os_get_client_size(window);
+    U32 window_width  = client_size.x;
+    U32 window_height = client_size.y;
 
     //-------------------------------------
     // @Note: Create Vertex Buffer
@@ -603,20 +496,21 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
     WCHAR *text = new WCHAR[655356];
     U32 text_length = 0;
 
-    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    text=L"“PIPPIN-> I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
     // @Note: Main Loop
-    Arena frame_arena = arena_alloc(GB(2));
-    while (g_running)
+    Arena *frame_arena = arena_alloc(megabytes(64));
+
+    while (! window->should_close)
     {
-        for (MSG msg; PeekMessage(&msg, hwnd, 0, 0, PM_REMOVE);)
+        for (MSG msg; PeekMessage(&msg, 0, 0, 0, PM_REMOVE);)
         {
             switch (msg.message)
             {
-                case WM_QUIT: {
-                    g_running = FALSE;
+                case WM_CHAR: {
+                    should_accumulate_time = !should_accumulate_time;
                 } break;
 
                 default: {
@@ -628,36 +522,39 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
 
         // ---------------------------
         // @Note: Query new dt
-        U64 new_counter;
-        {
-            LARGE_INTEGER li = {};
-            QueryPerformanceCounter(&li);
-            new_counter = li.QuadPart;
-        }
+        U64 new_counter = os_read_timer();
         F64 dt = (F64)(new_counter - last_counter) * counter_frequency_inverse;
         last_counter = new_counter;
 
+        char buf[256];
+        snprintf(buf, sizeof(buf), "fps: %d\n", (int)(1.0 / dt));
+        OutputDebugString(buf);
+
+        static F64 time = 0.0;
+        if (should_accumulate_time)
+        { time += dt; }
 
         // ---------------------------
         // @Note: Update
-        arena_clear(&frame_arena);
+        arena_clear(frame_arena);
 
         renderer.vertex_count = 0;
-        renderer.index_count = 0;
+        renderer.index_count  = 0;
 
-        Glyph_Cel *glyph_cels = array_alloc(&frame_arena, Glyph_Cel, 2048);
+        Glyph_Cel_Array glyph_cels = {};
+        darr_init(&glyph_cels, frame_arena);
 
         // -----------------------------
         // @Note: Text container.
-        V2 container_origin_px = V2{100.0f, 700.0f}; // minx, maxy
-        F32 container_width_px = 1000.0f;
-        F32 container_height_px = 300.0f;
+        V2 container_origin_px  = V2{100.0f, 700.0f}; // minx, maxy
+        F32 container_width_px  = (sinf(time*0.7f)*0.5f+0.5f) * 1000.0f;
+        F32 container_height_px = (cosf(time*0.2f)*0.5f+0.5f) * 300.0f;
 
         if (glyph_runs)
         { arrfree(glyph_runs); }
         glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
 
-        
+
 
         U64 run_count = arrlenu(glyph_runs);
         for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
@@ -689,8 +586,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
             {
                 Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
                 dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
-                                                                   rendering_mode, measuring_mode, grid_fit_mode,
-                                                                   hash_table_in, atlas, atlas_partition_sentinel, glyph_cels);
+                                                   rendering_mode, measuring_mode, grid_fit_mode,
+                                                   hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
             }
             else // font face doesn't exist in the outer-table
             {
@@ -698,8 +595,8 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
                 *hash_table_in = NULL;
                 hmput(atlas_hash_table_out, (U64)font_face, hash_table_in);
                 dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
-                                                                   rendering_mode, measuring_mode, grid_fit_mode,
-                                                                   hash_table_in, atlas, atlas_partition_sentinel, glyph_cels);
+                                                   rendering_mode, measuring_mode, grid_fit_mode,
+                                                   hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
             }
         }
 
@@ -736,7 +633,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
             U64 glyph_count = arrlenu(run.glyphIndices);
             for (U32 gi = 0; gi < glyph_count; ++gi)
             {
-                Glyph_Cel cel = glyph_cels[gi];
+                Glyph_Cel cel = *((Glyph_Cel *)glyph_cels.data.base + gi);
                 F32 advance_x_px = run.glyphAdvances[gi];
 
                 // If not empty glyph,
@@ -745,7 +642,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
                     // Line wrapping
                     if (gi < glyph_count - 1)
                     {
-                        Glyph_Cel next_glyph_cel = glyph_cels[gi + 1];
+                        Glyph_Cel next_glyph_cel = *((Glyph_Cel *)glyph_cels.data.base + gi + 1);
                         F32 next_baseline = origin_local_px.x + advance_x_px;
                         F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_glyph_cel.offset_px.x + next_glyph_cel.width_px;
                         if (next_glyph_blackbox_end_px >= container_width_px)
@@ -770,35 +667,33 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
                     V2 uv_min = {cel.uv_min.x, cel.uv_max.y};
                     V2 uv_max = {cel.uv_max.x, cel.uv_min.y};
 
-                    // Culling by Minkowski Sum.
-                    F32 add_w  = 0.5f*cel.width_px;
-                    F32 add_h  = 0.5f*cel.height_px;
-                    F32 left   = container_origin_px.x - add_w;
-                    F32 right  = container_origin_px.x + container_width_px + add_w;
-                    F32 top    = container_origin_px.y + add_h;
-                    F32 bottom = container_origin_px.y - container_height_px - add_h;
-                    F32 cen_x = min_px.x + add_w;
-                    F32 cen_y = min_px.y + add_h;
-                    if (cen_x > left && cen_x < right && cen_y > bottom && cen_y < top)
+                    // Culling/Clipping.
+                    AABB2 box_container = AABB2{container_origin_px, container_origin_px};
                     {
-                        V2 min_px_original = min_px;
-                        V2 max_px_original = max_px;
-                        F32 dv = (uv_min.y - uv_max.y);
-                        F32 inverse_cel_height = 1.0f / cel.height_px;
+                        box_container.min.y -= container_height_px;
+                        box_container.max.x += container_width_px;
+                    }
 
-                        if (cen_y > top - cel.height_px)
-                        {
-                            max_px.y = container_origin_px.y;
-                            F32 n = 1.0f - ((max_px.y - min_px_original.y) * inverse_cel_height);
-                            uv_max.y += dv*n;
-                        }
-                        if (cen_y < bottom + cel.height_px)
-                        {
-                            min_px.y = bottom + add_h;
-                            F32 n = 1.0f - ((max_px_original.y - min_px.y) * inverse_cel_height);
-                            uv_min.y -= dv*n;
-                        }
-                        render_texture(min_px, max_px, uv_min, uv_max); 
+                    AABB2 box_cel = AABB2{min_px, min_px};
+                    {
+                        box_cel.max += V2{cel.width_px, cel.height_px};
+                    }
+
+                    if (intersects(box_container, box_cel))
+                    {
+                        AABB2 overlap = intersection(box_container, box_cel);
+
+                        V2 uv_range_x  = V2{cel.uv_min.x, cel.uv_max.x};
+                        V2 uv_range_y  = V2{cel.uv_min.y, cel.uv_max.y};
+                        V2 box_range_x = V2{box_cel.min.x, box_cel.max.x};
+                        V2 box_range_y = V2{box_cel.min.y, box_cel.max.y};
+
+                        uv_min.x = lerp(uv_range_x,  normalize01(box_range_x, overlap.min.x));
+                        uv_max.x = lerp(uv_range_x,  normalize01(box_range_x, overlap.max.x));
+                        uv_min.y = lerp(uv_range_y, -normalize01(box_range_y, overlap.min.y) + 1.0f);
+                        uv_max.y = lerp(uv_range_y, -normalize01(box_range_y, overlap.max.y) + 1.0f);
+
+                        render_texture(overlap.min, overlap.max, uv_min, uv_max); 
                     }
                 }
 
@@ -822,7 +717,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
             d3d11.device_ctx->Map(vertex_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(renderer.vertices, mapped_subresource.pData, sizeof(renderer.vertices[0])*renderer.vertex_count);
+            memory_copy(mapped_subresource.pData, renderer.vertices, sizeof(renderer.vertices[0])*renderer.vertex_count);
             d3d11.device_ctx->Unmap(vertex_buffer, 0);
         }
 
@@ -831,7 +726,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
             d3d11.device_ctx->Map(index_buffer, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(renderer.indices, mapped_subresource.pData, sizeof(renderer.indices[0])*renderer.index_count);
+            memory_copy(mapped_subresource.pData, renderer.indices, sizeof(renderer.indices[0])*renderer.index_count);
             d3d11.device_ctx->Unmap(index_buffer, 0);
         }
 
@@ -840,11 +735,9 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         {
             D3D11_MAPPED_SUBRESOURCE mapped_subresource = {};
             d3d11.device_ctx->Map(d3d_atlas, 0/*index # of subresource*/, D3D11_MAP_WRITE_DISCARD, 0/*flags*/, &mapped_subresource);
-            memory_copy(atlas.data, mapped_subresource.pData, sizeof(atlas.data[0])*atlas.pitch*atlas.height);
+            memory_copy(mapped_subresource.pData, atlas.data, sizeof(atlas.data[0])*atlas.pitch*atlas.height);
             d3d11.device_ctx->Unmap(d3d_atlas, 0);
         }
-
-
 
 
         FLOAT background_color[4] = {0.121568f, 0.125490f, 0.133333f, 1.0f};
@@ -896,6 +789,7 @@ wWinMain(HINSTANCE hinst, HINSTANCE /*prev_hinst*/, PWSTR /*cmdline*/, int /*cmd
         d3d11.swapchain->Present(1, 0);
     }
 
+    os_close_window(window);
 
     return 0;
 }
