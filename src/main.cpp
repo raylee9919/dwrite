@@ -341,8 +341,8 @@ main_entry(void)
 
 
     // -----------------------------
-    // @Note: Initialize Renderer
-    d3d11_init((HWND)window->handle.u64);
+    // @Hack:
+    d3d11_init(win32_get_hwnd(window));
 
 
 
