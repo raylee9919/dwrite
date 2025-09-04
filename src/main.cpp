@@ -223,6 +223,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                     assume(! "x");
                 }
 
+                cel.is_empty        = false;
                 cel.uv_min       = {(F32)(x1 + margin) / (F32)atlas.width, (F32)(y1 + margin) / (F32)atlas.height};
                 cel.uv_max       = {(F32)(x2 - margin) / (F32)atlas.width, (F32)(y2 - margin) / (F32)atlas.height};
                 cel.width_px     = (F32)blackbox_width;
@@ -232,6 +233,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
             }
             else
             {
+                cel.is_empty        = true;
                 cel.uv_min       = V2{0.0f, 0.0f};
                 cel.uv_max       = V2{0.0f, 0.0f};
                 cel.width_px     = 0.0f;
@@ -670,9 +672,9 @@ main_entry(void)
                 F32 advance_x_px = run.glyphAdvances[gi];
 
                 // If not empty glyph,
-                if (cel.width_px != 0.0f && cel.height_px != 0.0f)
+                if (! cel.is_empty)
                 {
-                    // Line wrapping
+                    // @Todo: line wrap by grapheme.
                     if (gi < glyph_count - 1)
                     {
                         Glyph_Cel next_glyph_cel = *((Glyph_Cel *)glyph_cels.data.base + gi + 1);
@@ -687,9 +689,10 @@ main_entry(void)
 
                     // Translate to global(container) coordinates.
                     V2 origin_global_px = origin_local_px + origin_translate_px;
-                    // @Todo: Understand those.
-                    //origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                    //origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+
+                    // @Todo: Understand those and decide if I should hoist them out.
+                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
 
                     V2 min_px, max_px;
                     {
@@ -709,12 +712,12 @@ main_entry(void)
 
                     AABB2 box_cel = AABB2{min_px, max_px};
 
+                    // @Fix: intersection bug
                     if (intersects(box_container, box_cel))
                     {
                         // @Todo: intersection() does some duplicate operations to intersects().
                         AABB2 overlap = intersection(box_container, box_cel);
 
-                        // @Fix: uv test case : font-size:81, font:Fira Code, text:->
                         V2 uv_min      = V2{cel.uv_min.x, cel.uv_max.y};
                         V2 uv_max      = V2{cel.uv_max.x, cel.uv_min.y};
                         V2 uv_range_x  = V2{cel.uv_min.x, cel.uv_max.x};

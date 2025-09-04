@@ -135,20 +135,21 @@ typedef struct Dwrite_Map_Characters_Result Dwrite_Map_Characters_Result;
 struct Dwrite_Map_Characters_Result 
 {
     IDWriteFontFace5 *mapped_font_face;
-    UINT32 mapped_length = 0;
+    UINT32 mapped_length;
 };
 
 typedef struct Dwrite_Map_Complexity_Result Dwrite_Map_Complexity_Result;
 struct Dwrite_Map_Complexity_Result
 {
     UINT16 *glyph_indices;
-    UINT32 mapped_length = 0;
-    BOOL is_simple = FALSE;
+    UINT32 mapped_length;
+    BOOL is_simple;
 };
 
 typedef struct Glyph_Cel Glyph_Cel;
 struct Glyph_Cel
 {
+    B32 is_empty;
     V2  uv_min;
     V2  uv_max;
     F32 width_px;
@@ -191,7 +192,7 @@ struct Dwrite_Font_Fallback_Result
     U32 length;
     IDWriteFontFace5 *font_face;
 };
-static Dwrite_Font_Fallback_Result
+function Dwrite_Font_Fallback_Result
 dwrite_font_fallback(IDWriteFontFallback *font_fallback,
                      IDWriteFontCollection *font_collection,
                      WCHAR *base_family, WCHAR *locale,
@@ -200,6 +201,6 @@ dwrite_font_fallback(IDWriteFontFallback *font_fallback,
 
 // -------------------
 // @Note: Global Data.
-static Dwrite_Font_Hash_Table *dwrite_font_hash_table;
+global Dwrite_Font_Hash_Table *dwrite_font_hash_table;
 
 #endif // LSW_DWRITE_H

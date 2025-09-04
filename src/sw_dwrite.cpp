@@ -1,7 +1,7 @@
 // @Note: Determines the longest run of characters that map 1:1 to glyphs without
 // ambiguity. In that case, it returns TRUE and you can immediately use indices.
 // Otherwise, perform full glyph shaping.
-static Dwrite_Map_Complexity_Result
+function Dwrite_Map_Complexity_Result
 dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
                       IDWriteFontFace *font_face,
                       WCHAR *text, U32 text_length)
@@ -26,11 +26,11 @@ dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer,
     return result;
 }
 
-static Dwrite_Font_Fallback_Result
+function Dwrite_Font_Fallback_Result
 dwrite_font_fallback(IDWriteFontFallback1 *font_fallback,
-                         IDWriteFontCollection *font_collection,
-                         WCHAR *base_family, WCHAR *locale,
-                         WCHAR *text, U32 text_length)
+                     IDWriteFontCollection *font_collection,
+                     WCHAR *base_family, WCHAR *locale,
+                     WCHAR *text, U32 text_length)
 {
     Dwrite_Font_Fallback_Result result = {};
 
@@ -50,7 +50,7 @@ dwrite_font_fallback(IDWriteFontFallback1 *font_fallback,
     return result;
 }
 
-static DWRITE_GLYPH_RUN *
+function DWRITE_GLYPH_RUN *
 dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                           IDWriteFontCollection *font_collection,
                           IDWriteTextAnalyzer1 *text_analyzer,
@@ -104,7 +104,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         {
             Dwrite_Map_Complexity_Result complexity = dwrite_map_complexity(text_analyzer, run_font_face, remain_text, remain_length);
 
-            
+
             if (complexity.is_simple)
             {
                 U32 glyph_count_add = complexity.mapped_length;
