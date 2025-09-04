@@ -262,18 +262,14 @@ main_entry(void)
 
     F64 counter_frequency_inverse = (1.0 / (F64)os_query_timer_frequency());
 
-    Os_Window *window = os_create_window(1920, 1080, L"Window,창,fönster,ﻧَﺎﻓِﺬَﺓ");
+    Os_Window *window = os_create_window(1920, 1080, L"fönster");
     assume(window);
 
     Arena *permanent_arena = arena_alloc();
 
     // -------------------------------
     // @Note: Init DWrite
-#if 0
     F32 pt_per_em   = 81.0f;
-#else
-    F32 pt_per_em   = 12.0f;
-#endif
     F32 px_per_inch = (F32)os_get_dpi(window);
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -526,8 +522,8 @@ main_entry(void)
     WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
     U32 text_length = 0;
 
-    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
-    //text=L"->";
+    //text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    text=L"->";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -602,7 +598,7 @@ main_entry(void)
             assert(hmgeti(dwrite_font_hash_table, (U64)font_face) != -1);
             Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, (U64)font_face);
 
-            // @Note(lsw): Create rendering mode of a font face.
+            // @Note: Create rendering mode of a font face.
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
             DWRITE_MEASURING_MODE measuring_mode  = DWRITE_MEASURING_MODE_NATURAL;
             DWRITE_GRID_FIT_MODE grid_fit_mode    = DWRITE_GRID_FIT_MODE_DEFAULT;
@@ -691,6 +687,7 @@ main_entry(void)
 
                     // Translate to global(container) coordinates.
                     V2 origin_global_px = origin_local_px + origin_translate_px;
+                    // @Todo: Understand those.
                     //origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
                     //origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
 
@@ -717,6 +714,7 @@ main_entry(void)
                         // @Todo: intersection() does some duplicate operations to intersects().
                         AABB2 overlap = intersection(box_container, box_cel);
 
+                        // @Fix: uv test case : font-size:81, font:Fira Code, text:->
                         V2 uv_min      = V2{cel.uv_min.x, cel.uv_max.y};
                         V2 uv_max      = V2{cel.uv_max.x, cel.uv_min.y};
                         V2 uv_range_x  = V2{cel.uv_min.x, cel.uv_max.x};
