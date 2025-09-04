@@ -175,7 +175,7 @@ typedef struct Dwrite_Font_Metrics Dwrite_Font_Metrics;
 struct Dwrite_Font_Metrics
 {
     F32 du_per_em;
-    F32 vertical_advance_px;
+    F32 advance_height_px;
 };
 
 typedef struct Dwrite_Font_Hash_Table Dwrite_Font_Hash_Table;

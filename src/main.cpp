@@ -10,12 +10,12 @@
 #include "third_party/stb_ds.h"
 
 #include "sw_dwrite.h"
-#include "sw_render.h"
+#include "render.h"
 
 //------------------------------------
 // Note: [.cpp]
 #include "sw_dwrite.cpp"
-#include "sw_render.cpp"
+#include "render.cpp"
 
 //------------------------------------
 // Note: Generated HLSL byte code.
@@ -103,6 +103,23 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                                                                    0.0f, // baselineOriginY
                                                                    &analysis));
 
+            // @Note:
+            //
+            // bounds.top ------++-----######--+
+            //   (-7)           ||  ############
+            //                  ||####      ####
+            //                  |###       #####
+            //  baseline ______ |###      #####|
+            //   origin        \|############# |
+            //  (= 0,0)         \|###########  |
+            //                  ++-------###---+
+            //                  ##      ###    |
+            // bounds.bottom ---+#########-----+
+            //    (+2)          |              |
+            //             bounds.left     bounds.right
+            //                 (-1)           (+14)
+            //
+
             RECT bounds = {};
             hr = analysis->GetAlphaTextureBounds(texture_type, &bounds);
             if (FAILED(hr))
@@ -114,7 +131,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
 
             Glyph_Cel cel = {};
 
-            if (bounds.right > bounds.left && bounds.bottom > bounds.top)
+            if ((bounds.right > bounds.left) && (bounds.bottom > bounds.top))
             {
                 U32 blackbox_width  = bounds.right - bounds.left;
                 U32 blackbox_height = bounds.bottom - bounds.top;
@@ -186,9 +203,13 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                             U8 *src = bitmap_data_rgb + r*blackbox_width*3 + c*3;
                             *(U32 *)dst = *(U32 *)src;
                             if (src[0] == 0 && src[1] == 0  && src[2] == 0)
-                            { dst[3] = 0x00; }
+                            {
+                                dst[3] = 0x00; 
+                            }
                             else
-                            { dst[3] = 0xff; }
+                            {
+                                dst[3] = 0xff; 
+                            }
                         }
                     }
                 }
@@ -202,7 +223,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                 cel.width_px     = (F32)blackbox_width;
                 cel.height_px    = (F32)blackbox_height;
                 cel.offset_px.x  = (F32)bounds.left;
-                cel.offset_px.y  = (F32)bounds.bottom;
+                cel.offset_px.y  = (F32)-bounds.top;
             }
             else
             {
@@ -415,7 +436,7 @@ main_entry(void)
     // @Note: Create Sampler State
     D3D11_SAMPLER_DESC sampler_desc = {};
     {
-        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR; //D3D11_FILTER_MIN_MAG_MIP_POINT;
         sampler_desc.AddressU       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressV       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressW       = D3D11_TEXTURE_ADDRESS_BORDER;
@@ -605,17 +626,17 @@ main_entry(void)
         // -----------------------------------------
         // @Note: Render text per container.
 
-        F32 max_vertical_advance_px = 0.0f;
+        F32 max_advance_height_px = 0.0f;
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
             assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
-            max_vertical_advance_px = max(max_vertical_advance_px, hmget(dwrite_font_hash_table, run.fontFace).vertical_advance_px);
+            max_advance_height_px = max(max_advance_height_px, hmget(dwrite_font_hash_table, run.fontFace).advance_height_px);
         }
 
         V2 origin_local_px = {};
         V2 origin_translate_px = container_origin_px;
-        origin_translate_px.y -= max_vertical_advance_px;
+        origin_translate_px.y -= max_advance_height_px;
 
         { // @Temporary: Draw container
             V2 min_x = container_origin_px + V2{0.0f, -container_height_px};
@@ -630,7 +651,7 @@ main_entry(void)
 
             assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
             Dwrite_Font_Metrics metrics = hmget(dwrite_font_hash_table, run.fontFace);
-            F32 vertical_advance_px = metrics.vertical_advance_px;
+            F32 advance_height_px = metrics.advance_height_px;
 
             U64 glyph_count = arrlenu(run.glyphIndices);
             for (U32 gi = 0; gi < glyph_count; ++gi)
@@ -650,22 +671,20 @@ main_entry(void)
                         if (next_glyph_blackbox_end_px >= container_width_px)
                         {
                             origin_local_px.x = 0.0f;
-                            origin_local_px.y -= vertical_advance_px;
+                            origin_local_px.y -= advance_height_px;
                         }
                     }
 
                     // Translate to global(container) coordinates.
                     V2 origin_global_px = origin_local_px + origin_translate_px;
-                    {
-                        origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                        origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
-                    }
+                    //origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                    //origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
 
                     V2 min_px, max_px;
                     {
                         min_px = max_px = origin_global_px;
                         min_px.x += cel.offset_px.x;
-                        max_px.x += cel.offset_px.x + cel.width_px;
+                        max_px.x = min_px.x + cel.width_px;
                         max_px.y += cel.offset_px.y;
                         min_px.y = max_px.y - cel.height_px;
                     }
@@ -681,6 +700,7 @@ main_entry(void)
 
                     if (intersects(box_container, box_cel))
                     {
+                        // @Todo: intersection() does some duplicate operations to intersects().
                         AABB2 overlap = intersection(box_container, box_cel);
 
                         V2 uv_min      = V2{cel.uv_min.x, cel.uv_max.y};
@@ -707,7 +727,7 @@ main_entry(void)
         // -----------------------
         // @Note: D3D11 Pass
 
-        // @Temporary:
+        // @Temporary: Convert to NDC on CPU-side.
         for (U32 i = 0; i < renderer.vertex_count; ++i)
         {
             renderer.vertices[i].pos.x = (renderer.vertices[i].pos.x * 2.0f / window_width) - 1.0f;
@@ -772,6 +792,7 @@ main_entry(void)
             d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
             d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
+            // @Hack:
             d3d11.device_ctx->DrawIndexed(6, 0/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
         }
 
@@ -785,7 +806,10 @@ main_entry(void)
             d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
             d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
-            d3d11.device_ctx->DrawIndexed(renderer.index_count - 6, 6/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+            // @Hack:
+            //d3d11.device_ctx->DrawIndexed(renderer.index_count - 6, 6/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+            d3d11.device_ctx->DrawIndexed(6, 6, 0/*BaseVertexLocation*/);
+            d3d11.device_ctx->DrawIndexed(6, 12, 0/*BaseVertexLocation*/);
         }
 
         d3d11.swapchain->Present(1, 0);
