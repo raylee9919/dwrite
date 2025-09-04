@@ -29,6 +29,9 @@
 
 global B32 should_accumulate_time = false;
 
+//------------------------------------
+// @Todo: Validate high-dpi.
+
 typedef struct Bin Bin;
 struct Bin
 {
@@ -78,7 +81,9 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
             // CreateGlyphRunAnalysis() doesn't support DWRITE_RENDERING_MODE_OUTLINE.
             // We won't bother big glyphs. (many hundreds of pt)
             if (rendering_mode == DWRITE_RENDERING_MODE1_OUTLINE)
-            { rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; }
+            {
+                rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC; 
+            }
 
             DWRITE_GLYPH_RUN single_glyph_run = {};
             {
@@ -264,8 +269,12 @@ main_entry(void)
 
     // -------------------------------
     // @Note: Init DWrite
+#if 0
     F32 pt_per_em   = 81.0f;
-    F32 px_per_inch = 96.0f; // @Todo: DPI-Awareness?
+#else
+    F32 pt_per_em   = 12.0f;
+#endif
+    F32 px_per_inch = (F32)os_get_dpi(window);
 
     IDWriteFactory3 *dwrite_factory = NULL;
     win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
@@ -517,8 +526,8 @@ main_entry(void)
     WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
     U32 text_length = 0;
 
-    //text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
-    text=L"->";
+    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    //text=L"->";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -569,14 +578,19 @@ main_entry(void)
         // -----------------------------
         // @Note: Text container.
         V2 container_origin_px  = V2{100.0f, 700.0f}; // minx, maxy
-        F32 container_width_px  = /*(sinf(time*0.7f)*0.5f+0.5f) * */1000.0f;
-        F32 container_height_px = /*(cosf(time*0.5f)*0.5f+0.5f) * */300.0f;
+#if 1
+        F32 container_width_px  = (sinf((F32)time*0.7f)*0.5f+0.5f) * 1000.0f;
+        F32 container_height_px = (cosf((F32)time*0.5f)*0.5f+0.5f) * 300.0f;
+#else
+        F32 container_width_px  = 1000.0f;
+        F32 container_height_px = 300.0f;
+#endif
 
         if (glyph_runs)
         {
             arrfree(glyph_runs); 
         }
-        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, text, text_length);
+        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, px_per_inch, text, text_length);
 
 
         U64 run_count = arrlenu(glyph_runs);
@@ -762,7 +776,7 @@ main_entry(void)
         }
 
 
-        FLOAT background_color[4] = {0.121568f, 0.125490f, 0.133333f, 1.0f};
+        FLOAT background_color[4] = {0.12f, 0.12f, 0.12f, 1.0f};
         d3d11.device_ctx->ClearRenderTargetView(d3d11.framebuffer_view, background_color);
 
         D3D11_VIEWPORT viewport = {};
@@ -807,9 +821,12 @@ main_entry(void)
             d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
 
             // @Hack:
-            //d3d11.device_ctx->DrawIndexed(renderer.index_count - 6, 6/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+#if 1
+            d3d11.device_ctx->DrawIndexed(renderer.index_count - 6, 6/*StartIndexLocation*/, 0/*BaseVertexLocation*/);
+#else
             d3d11.device_ctx->DrawIndexed(6, 6, 0/*BaseVertexLocation*/);
             d3d11.device_ctx->DrawIndexed(6, 12, 0/*BaseVertexLocation*/);
+#endif
         }
 
         d3d11.swapchain->Present(1, 0);

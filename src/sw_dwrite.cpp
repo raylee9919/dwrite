@@ -55,7 +55,7 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
                           IDWriteFontCollection *font_collection,
                           IDWriteTextAnalyzer1 *text_analyzer,
                           WCHAR *locale, WCHAR *base_family,
-                          FLOAT pt_per_em, WCHAR *text, U32 text_length)
+                          FLOAT pt_per_em, FLOAT px_per_inch, WCHAR *text, U32 text_length)
 {
     DWRITE_GLYPH_RUN *result = NULL;
     F32 max_advance_height_px = 0.0f; // @Todo: return this
@@ -75,7 +75,8 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         run_font_face->GetMetrics(&dfm);
         F32 du_per_em = dfm.designUnitsPerEm;
         F32 em_per_du = 1.0f / (F32)du_per_em;
-        F32 px_per_em = pt_per_em*1.333333f;
+        F32 px_per_pt = px_per_inch / 72.0f;
+        F32 px_per_em = pt_per_em * px_per_pt;
         F32 px_per_du = px_per_em * em_per_du;
 
         F32 advance_height_px = (F32)(dfm.ascent + dfm.descent + dfm.lineGap) * px_per_du;
