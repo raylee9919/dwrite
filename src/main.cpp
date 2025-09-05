@@ -30,7 +30,8 @@
 global B32 should_accumulate_time = false;
 
 //------------------------------------
-// @Todo: Validate high-dpi.
+// @Todo: 1. Validate high-dpi.
+//        2. Kerning. Test Case: EB Goromond, "LoTR", Feel like 'T' must be closer to 'o'.
 
 typedef struct Bin Bin;
 struct Bin
