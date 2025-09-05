@@ -289,7 +289,7 @@ main_entry(void)
         L"Zapfino",             // 4
         L"EB Garamond",         // 5
     };
-    wchar_t *base_font_family_name = fonts[5];
+    wchar_t *base_font_family_name = fonts[0];
 
     {
         Dwrite_Get_Base_Font_Family_Index_Result family = dwrite_get_base_font_family_index(base_font_family_name);
@@ -513,10 +513,35 @@ main_entry(void)
         assume(SUCCEEDED(d3d11.device->CreateBlendState(&blend_desc, &glyph_blend_state)));
     }
 
-    //wchar_t *text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
-    //wchar_t *text=L"->";
-    //wchar_t *text=L"LoTR";
-    wchar_t *text=L"Hello, World! ¡Hola, Mundo! Bonjour le monde! Привет, мир! Привіт, світ! 你好，世界！ 你好，世界！ नमस्ते, विश्व! 안녕하세요, 세계! こんにちは、世界！ コンニチハ、セカイ！ สวัสดีชาวโลก வணக்கம், உலகம்!";
+    wchar_t *test_texts[] = 
+    {
+        L"  Korean-> 모든 인간은 태어날 때부터 자유로우며 그 존엄과 권리에 있어 동등하다. 인간은 천부적으로 이성과 양심을 부여받았으며 서로 형제애의 정신으로 행동하여야 한다.",
+        L"  Old English-> Hwæt! wē Gār-Dena in ġēar-dagum þēod-cyninga þrym gefrūnon, hūðā æþelingas ellen fremedon",
+        L"  Welsh-> Genir pawb yn rhydd ac yn gydradd â’i gilydd mewn urddas a hawliau. Fe’u cynysgaeddir â rheswm a chydwybod, a dylai pawb ymddwyn y naill at y llall mewn ysbryd cymodlon.",
+        L"  vietnamese-> Mọi người đều có quyền rời khỏi bất cứ nước nào, kể cả nước mình, cũng như có quyền trở về nước mình.",
+        L"  Greek-> Όλοι οι άνθρωποι γεννιούνται ελεύθεροι και ίσοι στην αξιοπρέπεια και τα δικαιώματα. Είναι προικισμένοι με λογική και συνείδηση, και οφείλουν να συμπεριφέρονται μεταξύ τους με πνεύμα αδελφοσύνης.",
+        L"  Anatolian hieroglyphs-> 𔗷𔗬𔑈𔓯𔐤𔗷𔖶𔔆𔗐𔓱𔑣𔓢𔑈𔓷𔖻𔗔𔑏𔖱𔗷𔖶𔑦𔗬𔓯𔓷",
+        L"  Egpytion Hieroglyphs-> 𓇋𓅱𓐷𓄙𓐱𓅓𓐸𓐰𓈖𓎿𓊃𓐰𓏏𓀁𓐍𓐰𓂋𓇓𓏏𓐰𓈖𓋴𓉼𓐷𓎵𓐱𓏤𓐸𓐰𓂋𓇋𓏏𓐰𓆑𓀀𓏪𓆣𓐰𓂋𓅱𓂋𓐰𓄂𓐰𓏏𓀀𓇋𓅱",
+        L"  Armenian-> Բոլոր մարդիկ ծնվում են ազատ ու հավասար իրենց արժանապատվությամբ ու իրավունքներով։ Նրանք ունեն բանականություն ու խիղճ և միմյանց պետք է եղբայրաբար վերաբերվեն։",
+        L"  Russian-> Все люди рождаются свободными и равными в своем достоинстве и правах. Они наделены разумом и совестью и должны поступать в отношении друг друга в духе братства.",
+        L"  Ukrainian-> Всі люди народжуються вільними і рівними у своїй гідності та правах. Вони наділені розумом і совістю і повинні діяти у відношенні один до одного в дусі братерства.",
+        L"  Simplified Chinese-> 人人生而自由,在尊严和权利上一律平等。他们赋有理性和良心,并应以兄弟关系的精神相对待。",
+        L"  Traditional Chinese-> 人人生而自由，在尊嚴和權利上一律平等。他們賦有理性和良心，並應以兄弟關係的精神相對待。",
+        L"  Japanese-> すべての人間は、生まれながらにして自由であり、かつ、尊厳と権利とについて平等である。人間は、理性と良心とを授けられており、互いに同胞の精神をもって行動しなければならない。",
+        L"  Old Persian-> 𐏐𐎠𐎭𐎶𐏐𐎭𐎠𐎼𐎹𐎺𐎢𐏁𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎺𐏀𐎼𐎣𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐎠𐎴𐎠𐎶𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎱𐎠𐎼𐎿𐎡𐎹𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎭𐏃𐎹𐎢𐎴𐎠𐎶𐏐𐎻𐏁𐎫𐎠𐎿𐎱𐏃𐎹𐎠𐏐𐎱𐎢𐏂𐏐𐎠𐎼𐏁𐎠𐎶𐏃𐎹𐎠𐏐𐎴𐎱𐎠𐏐𐏃𐎧𐎠𐎶𐎴𐎡𐏁𐎡𐎹",
+    };
+#if 0
+    wchar_t *text = test_texts[2];
+#else
+    U64 to = 0;
+    wchar_t *text = arena_push_array(permanent_arena, wchar_t, 1677216);
+    for (U32 i = 0; i < array_count(test_texts); ++i)
+    {
+        U64 len = wcslen(test_texts[i]);
+        memory_copy(text + to, test_texts[i], len*sizeof(wchar_t));
+        to += len;
+    }
+#endif
     U32 text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -567,8 +592,9 @@ main_entry(void)
         // -----------------------------
         // @Temporary: Text Container
 #if 1
-        F32 container_width_px  = (sinf((F32)time*0.9f)*0.5f+0.5f) * (F32)window_width;
-        F32 container_height_px = (cosf((F32)time*0.7f)*0.5f+0.5f) * (F32)window_height;
+        F32 container_width_px  = (sinf((F32)time*0.3f)*0.5f+0.5f) * (F32)window_width;
+        F32 container_height_px = window_height*0.8f;
+        //F32 container_height_px = (cosf((F32)time*0.4f)*0.5f+0.5f) * (F32)window_height;
 #else
         F32 container_width_px  = 1000.0f;
         F32 container_height_px = 300.0f;

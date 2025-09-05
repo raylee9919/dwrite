@@ -153,7 +153,7 @@ dwrite_insert_font_to_table(IDWriteFontFace *font_face, Dwrite_Font_Metrics metr
             Dwrite_Font_Table_Entry *entry = dwrite.font_table.entries + idx_to_insert;
             entry->key      = font_face;
             entry->metrics  = metrics;
-            entry->glyph_table.entry_count = 128;
+            entry->glyph_table.entry_count = 256;
             entry->glyph_table.entries = arena_push_array(dwrite.arena, Dwrite_Glyph_Table_Entry, entry->glyph_table.entry_count); // @Todo: Proper arena
             entry->occupied = true;
         }
