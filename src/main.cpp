@@ -158,7 +158,7 @@ dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
 
                 dll_for(atlas_partition_sentinel, partition)
                 {
-                    if (!partition->occupied)
+                    if (! partition->occupied)
                     {
                         U32 w1 = partition->w;
                         U32 h1 = partition->h;
@@ -167,11 +167,12 @@ dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
 
                         if (w1 >= w2 && h1 >= h2)
                         {
+                            fit = true;
+
                             x1 = partition->x;
                             y1 = partition->y;
                             x2 = x1 + w2;
                             y2 = y1 + h2;
-                            fit = true;
 
                             U32 dx[3] = {w2, 0, w2};
                             U32 dy[3] = {0, h2, h2};
@@ -192,6 +193,15 @@ dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
                             partition->occupied = true;
                             partition->w = w2;
                             partition->h = h2;
+
+                            // @Todo: Check dll op.
+                            //        Move to the end of the list so search might be faster.
+                            partition->prev->next = partition->next;
+                            partition->next->prev = partition->prev;
+                            partition->prev = atlas_partition_sentinel->prev;
+                            partition->next = atlas_partition_sentinel;
+                            atlas_partition_sentinel->prev->next = partition;
+                            atlas_partition_sentinel->prev = partition;
 
                             break;
                         }
@@ -225,7 +235,7 @@ dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
                 }
                 else
                 {
-                    assume(! "x");
+                    assume(! "Couldn't fit in the atlas");
                 }
 
                 cel.is_empty     = false;
@@ -529,6 +539,8 @@ main_entry(void)
         L"  Traditional Chinese-> 人人生而自由，在尊嚴和權利上一律平等。他們賦有理性和良心，並應以兄弟關係的精神相對待。",
         L"  Japanese-> すべての人間は、生まれながらにして自由であり、かつ、尊厳と権利とについて平等である。人間は、理性と良心とを授けられており、互いに同胞の精神をもって行動しなければならない。",
         L"  Old Persian-> 𐏐𐎠𐎭𐎶𐏐𐎭𐎠𐎼𐎹𐎺𐎢𐏁𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎺𐏀𐎼𐎣𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐎠𐎴𐎠𐎶𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎱𐎠𐎼𐎿𐎡𐎹𐏐𐎧𐏁𐎠𐎹𐎰𐎡𐎹𐏐𐎭𐏃𐎹𐎢𐎴𐎠𐎶𐏐𐎻𐏁𐎫𐎠𐎿𐎱𐏃𐎹𐎠𐏐𐎱𐎢𐏂𐏐𐎠𐎼𐏁𐎠𐎶𐏃𐎹𐎠𐏐𐎴𐎱𐎠𐏐𐏃𐎧𐎠𐎶𐎴𐎡𐏁𐎡𐎹",
+        L"  Sinhala-> සියලු මනුෂ්‍යයෝ නිදහස්ව උපත ලබා ඇත. ගරුත්වයෙන් හා අයිතිවාසිකම්වලින් සමාන වෙති. යුක්ති අයුක්ති පිළිබඳ හැඟීමෙන් හා හෘදය සාක්ෂියෙන් යුත් ඔවුන්, ඔවුනොවුන්ට සැළකිය යුත්තේ සහෝදරත්වය පිළිබඳ හැඟීමෙනි.",
+        L"  Runic-> ᚢᚴ᛬​ᛋᛁᛘ᛬​ᛚᛅᛁᚦ᛬​ᛅᛏ᛬​ᛁᚢᛚᚢᛘ᛬​ᚴᚢᚱᚦᚢᛋᚴ᛬​ᛘᛁᚾ᛬​ᚦᛅᚱ᛬​ᚢᚴᛅᛏᛁᚱ",
     };
 #if 0
     wchar_t *text = test_texts[2];
