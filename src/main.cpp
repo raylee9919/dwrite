@@ -277,7 +277,7 @@ main_entry(void)
 
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em   = 16.0f;
+    F32 pt_per_em   = 80.0f;
     F32 px_per_inch = (F32)os_get_dpi(window);
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -557,8 +557,9 @@ main_entry(void)
     WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
     U32 text_length = 0;
 
-    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    //text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
     //text=L"->";
+    text=L"LoTR";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -608,15 +609,15 @@ main_entry(void)
 
         // -----------------------------
         // @Note: Text container.
-        V2 container_origin_px  = V2{0.0f, 700.0f};
-
 #if 1
-        F32 container_width_px  = (sinf((F32)time*0.7f)*0.5f+0.5f) * 1000.0f;
-        F32 container_height_px = (cosf((F32)time*0.5f)*0.5f+0.5f) * 300.0f;
+        F32 container_width_px  = (sinf((F32)time*0.9f)*0.5f+0.5f) * (F32)window_width;
+        F32 container_height_px = (cosf((F32)time*0.7f)*0.5f+0.5f) * (F32)window_height;
 #else
         F32 container_width_px  = 1000.0f;
         F32 container_height_px = 300.0f;
 #endif
+
+        V2 container_origin_px  = V2{((F32)window_width - container_width_px)*0.5f, ((F32)window_height + container_height_px)*0.5f};
 
         if (glyph_runs)
         {
@@ -714,7 +715,7 @@ main_entry(void)
                     {
                         Glyph_Cel next_cel = ((Glyph_Cel *)glyph_cels.data.base)[gi + 1];
                         F32 next_baseline = origin_local_px.x + advance_x_px;
-                        F32 next_glyph_blackbox_end_px = next_baseline + /*run.glyphOffsets[gi + 1].advanceOffset*/ + next_cel.offset_px.x + next_cel.width_px;
+                        F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_cel.offset_px.x + next_cel.width_px;
                         if (next_glyph_blackbox_end_px >= container_width_px)
                         {
                             origin_local_px.x = 0.0f;
@@ -726,8 +727,8 @@ main_entry(void)
                     V2 origin_global_px = origin_local_px + origin_translate_px;
 
                     // @Todo: Understand those and decide if I should hoist them out.
-                    //origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                    //origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
 
                     V2 min_px, max_px;
                     {

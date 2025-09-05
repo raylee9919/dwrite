@@ -2,3 +2,4 @@ build
 tags
 project.*
 codebase
+*.html
