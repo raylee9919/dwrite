@@ -9,12 +9,12 @@
 #define STBDS_ASSERT
 #include "third_party/stb_ds.h"
 
-#include "sw_dwrite.h"
+#include "win32_dwrite.h"
 #include "render.h"
 
 //------------------------------------
 // Note: [.cpp]
-#include "sw_dwrite.cpp"
+#include "win32_dwrite.cpp"
 #include "render.cpp"
 
 //------------------------------------
@@ -275,7 +275,7 @@ main_entry(void)
         os_abort();
     }
 
-    F32 pt_per_em   = 16.0f;
+    F32 pt_per_em   = 20.0f;
     F32 px_per_inch = (F32)os_get_dpi(window);
 
     dwrite_init();
@@ -513,10 +513,10 @@ main_entry(void)
         assume(SUCCEEDED(d3d11.device->CreateBlendState(&blend_desc, &glyph_blend_state)));
     }
 
-    wchar_t *text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
+    //wchar_t *text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
     //wchar_t *text=L"->";
     //wchar_t *text=L"LoTR";
-    //wchar_t *text=L"English한글";
+    wchar_t *text=L"Hello, World! ¡Hola, Mundo! Bonjour le monde! Привет, мир! Привіт, світ! 你好，世界！ 你好，世界！ नमस्ते, विश्व! 안녕하세요, 세계! こんにちは、世界！ コンニチハ、セカイ！ สวัสดีชาวโลก வணக்கம், உலகம்!";
     U32 text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -629,7 +629,6 @@ main_entry(void)
             max_advance_height_px = max(max_advance_height_px, font_metrics.advance_height_px);
         }
 
-        V2 origin_local_px = {};
         V2 origin_translate_px = container_origin_px;
         origin_translate_px.y -= max_advance_height_px;
 
@@ -639,10 +638,21 @@ main_entry(void)
             render_quad_px_min_max(min_x, max_x);
         }
 
+        U32 global_gi = 0;
+
         // @Temporary:
+        V2 origin_local_px = {};
+        if (run_count > 0)
+        {
+            if (glyph_runs[0].glyphCount > 0)
+            {
+                origin_local_px.x -= ((Glyph_Cel *)glyph_cels.base)[0].offset_px.x;
+            }
+        }
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
+            U32 glyph_count_in_run = run.glyphCount;
 
             Dwrite_Font_Table_Entry *font_entry = dwrite_get_entry_from_font_table(run.fontFace);
             assert(font_entry);
@@ -650,34 +660,29 @@ main_entry(void)
 
             F32 advance_height_px = metrics.advance_height_px;
 
-            U64 glyph_count = arrlenu(run.glyphIndices);
-            for (U32 gi = 0; gi < glyph_count; ++gi)
+            for (U32 local_gi = 0; local_gi < glyph_count_in_run; ++local_gi, ++global_gi)
             {
-                Glyph_Cel cel = *((Glyph_Cel *)glyph_cels.base + gi);
-                F32 advance_x_px = run.glyphAdvances[gi];
+                Glyph_Cel cel = *((Glyph_Cel *)glyph_cels.base + global_gi);
+                F32 advance_x_px = run.glyphAdvances[local_gi];
 
                 // If not empty glyph,
                 if (! cel.is_empty)
                 {
                     // @Todo: line wrap by grapheme.
-                    if (gi < glyph_count - 1)
+                    F32 left_px  = origin_local_px.x + cel.offset_px.x;
+                    F32 right_px = left_px + cel.width_px;
+                    if (right_px >= container_width_px)
                     {
-                        Glyph_Cel next_cel = ((Glyph_Cel *)glyph_cels.base)[gi + 1];
-                        F32 next_baseline = origin_local_px.x + advance_x_px;
-                        F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_cel.offset_px.x + next_cel.width_px;
-                        if (next_glyph_blackbox_end_px >= container_width_px)
-                        {
-                            origin_local_px.x = 0.0f;
-                            origin_local_px.y -= advance_height_px;
-                        }
+                        origin_local_px.x = -cel.offset_px.x;
+                        origin_local_px.y -= advance_height_px;
                     }
 
                     // Translate to global(container) coordinates.
                     V2 origin_global_px = origin_local_px + origin_translate_px;
 
                     // @Todo: Understand those and decide if I should hoist them out.
-                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+                    //origin_global_px.x += run.glyphOffsets[local_gi].advanceOffset;
+                    //origin_global_px.y += run.glyphOffsets[local_gi].ascenderOffset;
 
                     V2 min_px, max_px;
                     {
