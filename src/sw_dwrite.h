@@ -72,7 +72,6 @@ struct Dwrite_Text_Analysis_Source final : IDWriteTextAnalysisSource
     const UINT32 _text_length;
 };
 
-
 typedef struct Dwrite_Text_Analysis_Sink_Result Dwrite_Text_Analysis_Sink_Result; 
 struct Dwrite_Text_Analysis_Sink_Result 
 {
@@ -192,15 +191,42 @@ struct Dwrite_Font_Fallback_Result
     U32 length;
     IDWriteFontFace5 *font_face;
 };
-function Dwrite_Font_Fallback_Result
-dwrite_font_fallback(IDWriteFontFallback *font_fallback,
-                     IDWriteFontCollection *font_collection,
-                     WCHAR *base_family, WCHAR *locale,
-                     WCHAR *text, UINT32 text_length);
 
+typedef struct Dwrite_State Dwrite_State;
+struct Dwrite_State
+{
+    Arena *arena;
 
-// -------------------
-// @Note: Global Data.
-global Dwrite_Font_Hash_Table *dwrite_font_hash_table;
+    IDWriteFactory3         *factory;
+    IDWriteFontCollection   *font_collection;
+    IDWriteFontFallback     *font_fallback;
+    IDWriteFontFallback1    *font_fallback1;
+    IDWriteTextAnalyzer     *text_analyzer;
+    IDWriteTextAnalyzer1    *text_analyzer1;
+
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]; // @Todo: safe?
+    IDWriteRenderingParams *rendering_params;
+
+    Dwrite_Font_Hash_Table *font_hash_table;
+};
+
+typedef struct 
+{
+    U32 index;
+    B32 exists;
+} Dwrite_Get_Base_Font_Family_Index_Result;
+
+// -------------------------------------
+// @Note: Code
+function Dwrite_Map_Complexity_Result dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer, IDWriteFontFace *font_face, WCHAR *text, U32 text_length);
+function Dwrite_Font_Fallback_Result dwrite_font_fallback(IDWriteFontFallback *font_fallback, IDWriteFontCollection *font_collection, WCHAR *base_family, WCHAR *locale, WCHAR *text, UINT32 text_length);
+function DWRITE_GLYPH_RUN *dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback, IDWriteFontCollection *font_collection, IDWriteTextAnalyzer1 *text_analyzer, WCHAR *locale, WCHAR *base_family, FLOAT pt_per_em, FLOAT px_per_inch, WCHAR *text, U32 text_length);
+function void dwrite_abort(wchar_t *message);
+function void dwrite_init(void);
+function Dwrite_Get_Base_Font_Family_Index_Result dwrite_get_base_font_family_index(wchar_t *base_font_family_name);
+
+// -------------------------------------
+// @Note: Data
+global Dwrite_State dwrite;
 
 #endif // LSW_DWRITE_H

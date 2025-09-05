@@ -60,8 +60,8 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
 
     U64 glyph_count = arrlenu(run.glyphIndices);
     IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
-    assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
-    Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, run.fontFace);
+    assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
+    Dwrite_Font_Metrics font_metrics = hmget(dwrite.font_hash_table, run.fontFace);
 
     //F32 em_per_du = 1.0f / font_metrics.du_per_em;
     //F32 px_per_du = run.fontEmSize * em_per_du;
@@ -271,25 +271,16 @@ main_entry(void)
     Os_Window *window = os_create_window(1920, 1080, L"fönster");
     if (! window)
     {
-        // @Fix: focus to caption.
-        os_gui_message(L"CAPTION", L"Could not create window");
+        os_gui_message(L"ERROR", L"Could not create window");
         os_abort();
     }
 
-    // -------------------------------
-    // @Note: Init DWrite
-    F32 pt_per_em   = 80.0f;
+    F32 pt_per_em   = 16.0f;
     F32 px_per_inch = (F32)os_get_dpi(window);
 
-    IDWriteFactory3 *dwrite_factory = NULL;
-    win32_assume_hr(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite_factory), (IUnknown **)&dwrite_factory));
+    dwrite_init();
 
-    IDWriteFontCollection *font_collection = NULL;
-    win32_assume_hr(dwrite_factory->GetSystemFontCollection(&font_collection));
-
-    Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
-
-    WCHAR *fonts[] = 
+    wchar_t *fonts[] = 
     {
         L"Fira Code",           // 0
         L"Consolas",            // 1
@@ -298,38 +289,18 @@ main_entry(void)
         L"Zapfino",             // 4
         L"EB Garamond",         // 5
     };
-    WCHAR *base_font_family_name = fonts[5];
-    U32 family_index = 0;
-    BOOL family_exists = FALSE;
-    win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
+    wchar_t *base_font_family_name = fonts[5];
 
-    assume(family_exists);
-
-    // @Note: IDWriteTextLayout allows you to map a string and a base font into chunks of string with a resolved font.
-    //        For example, if there's a emoji in the string, it would automatically fallback from the builtin font to Segoe UI (the emoji font on Windows). 
-    IDWriteFontFallback *font_fallback = NULL;
-    win32_assume_hr(dwrite_factory->GetSystemFontFallback(&font_fallback));
-
-    IDWriteFontFallback1 *font_fallback1 = NULL;
-    win32_assume_hr(font_fallback->QueryInterface(__uuidof(font_fallback1), (void **)&font_fallback1));
-
-    IDWriteTextAnalyzer *text_analyzer = NULL;
-    win32_assume_hr(dwrite_factory->CreateTextAnalyzer(&text_analyzer));
-
-    IDWriteTextAnalyzer1 *text_analyzer1 = NULL;
-    win32_assume_hr(text_analyzer->QueryInterface(__uuidof(text_analyzer1), (void **)&text_analyzer1));
-
-    WCHAR locale[LOCALE_NAME_MAX_LENGTH]; // LOCALE_NAME_MAX_LENGTH includes a terminating null character.
-    if (! GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH))
-    { memory_copy(locale, L"en-US", sizeof(L"en-US")); }
+    {
+        Dwrite_Get_Base_Font_Family_Index_Result family = dwrite_get_base_font_family_index(base_font_family_name);
+        assume(family.exists);
+    }
 
 
 
-    // -----------------------------
-    // @Note: Prepare DWrite
+    // @Temporary:
+    Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
-    IDWriteRenderingParams *rendering_params = NULL;
-    win32_assume_hr(dwrite_factory->CreateRenderingParams(&rendering_params));
 
     B32 is_cleartype = TRUE;
     DWRITE_GLYPH_RUN *glyph_runs = NULL;
@@ -359,8 +330,7 @@ main_entry(void)
     }
 
 
-    // -----------------------------
-    // @Hack:
+    // @Hack: HWND
     d3d11_init(win32_get_hwnd(window));
 
 
@@ -548,25 +518,15 @@ main_entry(void)
         assume(SUCCEEDED(d3d11.device->CreateBlendState(&blend_desc, &glyph_blend_state)));
     }
 
-    U64 last_counter;
-    {
-        LARGE_INTEGER li = {};
-        QueryPerformanceCounter(&li);
-        last_counter = li.QuadPart;
-    }
-
-    WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
-    U32 text_length = 0;
-
-    //text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
-    //text=L"->";
-    text=L"LoTR";
-    text_length = (U32)wcslen(text);
+    wchar_t *text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
+    //wchar_t text=L"->";
+    //wchar_t text=L"LoTR";
+    U32 text_length = (U32)wcslen(text);
 
     // ------------------------------
     // @Note: Main Loop
     Arena *frame_arena = arena_alloc();
-
+    U64 last_counter = os_read_timer();
     while (! window->should_close)
     {
         for (MSG msg; PeekMessage(&msg, 0, 0, 0, PM_REMOVE);)
@@ -585,7 +545,7 @@ main_entry(void)
         }
 
         // ---------------------------
-        // @Note: Query new dt
+        // @Note: Query dt
         U64 new_counter = os_read_timer();
         F64 dt = (F64)(new_counter - last_counter) * counter_frequency_inverse;
         last_counter = new_counter;
@@ -594,7 +554,7 @@ main_entry(void)
         snprintf(buf, sizeof(buf), "dt: %.6f\n", dt);
         OutputDebugString(buf);
 
-        static F64 time = 0.0;
+        local_persist F64 time = 0.0;
         if (should_accumulate_time)
         { time += dt; }
 
@@ -609,7 +569,7 @@ main_entry(void)
         darr_init(&glyph_cels, frame_arena);
 
         // -----------------------------
-        // @Note: Text container.
+        // @Temporary: Text Container
 #if 1
         F32 container_width_px  = (sinf((F32)time*0.9f)*0.5f+0.5f) * (F32)window_width;
         F32 container_height_px = (cosf((F32)time*0.7f)*0.5f+0.5f) * (F32)window_height;
@@ -624,7 +584,7 @@ main_entry(void)
         {
             arrfree(glyph_runs); 
         }
-        glyph_runs = dwrite_map_text_to_glyphs(font_fallback1, font_collection, text_analyzer1, locale, base_font_family_name, pt_per_em, px_per_inch, text, text_length);
+        glyph_runs = dwrite_map_text_to_glyphs(dwrite.font_fallback1, dwrite.font_collection, dwrite.text_analyzer1, dwrite.locale, base_font_family_name, pt_per_em, px_per_inch, text, text_length);
 
 
         U64 run_count = arrlenu(glyph_runs);
@@ -633,8 +593,8 @@ main_entry(void)
             DWRITE_GLYPH_RUN run = glyph_runs[run_idx];
             IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
 
-            assert(hmgeti(dwrite_font_hash_table, (U64)font_face) != -1);
-            Dwrite_Font_Metrics font_metrics = hmget(dwrite_font_hash_table, (U64)font_face);
+            assert(hmgeti(dwrite.font_hash_table, (U64)font_face) != -1);
+            Dwrite_Font_Metrics font_metrics = hmget(dwrite.font_hash_table, (U64)font_face);
 
             // @Note: Create rendering mode of a font face.
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
@@ -647,7 +607,7 @@ main_entry(void)
                                                                    run.isSideways,
                                                                    DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
                                                                    measuring_mode,
-                                                                   rendering_params,
+                                                                   dwrite.rendering_params,
                                                                    &rendering_mode,
                                                                    &grid_fit_mode));
 
@@ -656,16 +616,16 @@ main_entry(void)
             if (hmgeti(atlas_hash_table_out, (U64)font_face) != -1/*exists*/)
             {
                 Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
-                dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
+                dwrite_pack_glyphs_in_run_to_atlas(dwrite.factory, is_cleartype, run,
                                                    rendering_mode, measuring_mode, grid_fit_mode,
                                                    hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
             }
             else // font face doesn't exist in the outer-table
             {
-                Dwrite_Inner_Hash_Table **hash_table_in = new Dwrite_Inner_Hash_Table *;
+                Dwrite_Inner_Hash_Table **hash_table_in = arena_push_struct(dwrite.arena, Dwrite_Inner_Hash_Table *);
                 *hash_table_in = NULL;
                 hmput(atlas_hash_table_out, (U64)font_face, hash_table_in);
-                dwrite_pack_glyphs_in_run_to_atlas(dwrite_factory, is_cleartype, run,
+                dwrite_pack_glyphs_in_run_to_atlas(dwrite.factory, is_cleartype, run,
                                                    rendering_mode, measuring_mode, grid_fit_mode,
                                                    hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
             }
@@ -678,9 +638,9 @@ main_entry(void)
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
-            assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
+            assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
             // @Hack:
-            max_advance_height_px = max(max_advance_height_px, hmget(dwrite_font_hash_table, run.fontFace).advance_height_px);
+            max_advance_height_px = max(max_advance_height_px, hmget(dwrite.font_hash_table, run.fontFace).advance_height_px);
         }
 
         V2 origin_local_px = {};
@@ -698,8 +658,8 @@ main_entry(void)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
 
-            assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
-            Dwrite_Font_Metrics metrics = hmget(dwrite_font_hash_table, run.fontFace);
+            assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
+            Dwrite_Font_Metrics metrics = hmget(dwrite.font_hash_table, run.fontFace);
             F32 advance_height_px = metrics.advance_height_px;
 
             U64 glyph_count = arrlenu(run.glyphIndices);

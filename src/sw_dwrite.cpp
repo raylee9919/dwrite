@@ -85,12 +85,12 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         // --------------------------------------------------------------------
         // @Note: Put to hash table.
         // @Important: Must not free a font face for this to work.
-        if (hmgeti(dwrite_font_hash_table, (U64)run_font_face) == -1) // !exists
+        if (hmgeti(dwrite.font_hash_table, (U64)run_font_face) == -1) // !exists
         {
             Dwrite_Font_Metrics metrics = {};
             metrics.du_per_em = du_per_em;
             metrics.advance_height_px = advance_height_px;
-            hmput(dwrite_font_hash_table, (U64)run_font_face, metrics);
+            hmput(dwrite.font_hash_table, (U64)run_font_face, metrics);
         }
 
         U16 *indices                 = NULL;
@@ -264,5 +264,55 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         offset += run_length;
     }
 
+    return result;
+}
+
+function void
+dwrite_abort(wchar_t *message)
+{
+    os_gui_message(L"DWrite Error", message);
+    os_abort();
+}
+
+function void
+dwrite_init(void)
+{
+    dwrite.arena = arena_alloc();
+
+    if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite.factory), (IUnknown **)&dwrite.factory)))
+    { dwrite_abort(L"DWriteCreateFactory() Error."); }
+
+    if (FAILED(dwrite.factory->GetSystemFontCollection(&dwrite.font_collection)))
+    { dwrite_abort(L"GetSystemFontCollection() Error."); }
+
+    if (FAILED(dwrite.factory->GetSystemFontFallback(&dwrite.font_fallback)))
+    { dwrite_abort(L"GetSystemFontFallback() Error."); }
+
+    if (FAILED(dwrite.font_fallback->QueryInterface(__uuidof(dwrite.font_fallback1), (void **)&dwrite.font_fallback1)))
+    { dwrite_abort(L"Error while querying IDWriteFontFallback1 interface."); }
+
+    if (FAILED(dwrite.factory->CreateTextAnalyzer(&dwrite.text_analyzer)))
+    { dwrite_abort(L"CreateTextAnalyzer() Error."); }
+
+    if (FAILED(dwrite.text_analyzer->QueryInterface(__uuidof(dwrite.text_analyzer1), (void **)&dwrite.text_analyzer1)))
+    { dwrite_abort(L"Error while querying IDWriteTextAnalyzer1 interface."); }
+
+
+    // Set locale.
+    wchar_t *default_locale = L"en-US";
+    if (! GetUserDefaultLocaleName(dwrite.locale, array_count(dwrite.locale)))
+    { memory_copy(dwrite.locale, default_locale, sizeof(default_locale)); }
+
+    // Create rendering paramters.
+    if (FAILED(dwrite.factory->CreateRenderingParams(&dwrite.rendering_params)))
+    { dwrite_abort(L"IDWriteFactroy::CreateRenderingParams() Error."); }
+}
+
+function Dwrite_Get_Base_Font_Family_Index_Result
+dwrite_get_base_font_family_index(wchar_t *base_font_family_name)
+{
+    Dwrite_Get_Base_Font_Family_Index_Result result = {};
+    if (FAILED(dwrite.font_collection->FindFamilyName(base_font_family_name, &result.index, &result.exists))) 
+    { dwrite_abort(L"IDWriteFontCollection::FindFamilyName() Error."); }
     return result;
 }
