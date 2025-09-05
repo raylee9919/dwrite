@@ -157,32 +157,11 @@ struct Glyph_Cel
 };
 typedef Dynamic_Array(Glyph_Cel) Glyph_Cel_Array;
 
-typedef struct Dwrite_Inner_Hash_Table Dwrite_Inner_Hash_Table;
-struct Dwrite_Inner_Hash_Table
-{
-    UINT16      key;
-    Glyph_Cel   value;
-};
-
-typedef struct Dwrite_Outer_Hash_Table Dwrite_Outer_Hash_Table;
-struct Dwrite_Outer_Hash_Table
-{
-    U64 key;
-    Dwrite_Inner_Hash_Table **value;
-};
-
 typedef struct Dwrite_Font_Metrics Dwrite_Font_Metrics;
 struct Dwrite_Font_Metrics
 {
     F32 du_per_em;
     F32 advance_height_px;
-};
-
-typedef struct Dwrite_Font_Hash_Table Dwrite_Font_Hash_Table;
-struct Dwrite_Font_Hash_Table
-{
-    U64 key; // (U64)(IDwriteFontFace *)
-    Dwrite_Font_Metrics value;
 };
 
 typedef struct Dwrite_Font_Fallback_Result Dwrite_Font_Fallback_Result;
@@ -192,6 +171,42 @@ struct Dwrite_Font_Fallback_Result
     IDWriteFontFace5 *font_face;
 };
 
+// -----------------------------------------
+// @Note: Inner Glyph Table
+struct Dwrite_Glyph_Table_Entry
+{
+    B8 occupied;
+    B8 tombstone;
+    UINT16      idx;
+    Glyph_Cel   cel;
+};
+
+struct Dwrite_Glyph_Table
+{
+    U32 entry_count;
+    Dwrite_Glyph_Table_Entry *entries;
+};
+
+// -----------------------------------------
+// @Note: Font Face Table
+struct Dwrite_Font_Table_Entry
+{
+    B8 occupied;
+    B8 tombstone;
+    IDWriteFontFace *key; // = 
+    Dwrite_Font_Metrics metrics;
+    Dwrite_Glyph_Table glyph_table;
+};
+
+struct Dwrite_Font_Table
+{
+    U32 entry_count;
+    Dwrite_Font_Table_Entry *entries;
+};
+
+
+// -----------------------------------------
+// @Note: DWrite State
 typedef struct Dwrite_State Dwrite_State;
 struct Dwrite_State
 {
@@ -207,7 +222,7 @@ struct Dwrite_State
     wchar_t locale[LOCALE_NAME_MAX_LENGTH]; // @Todo: safe?
     IDWriteRenderingParams *rendering_params;
 
-    Dwrite_Font_Hash_Table *font_hash_table;
+    Dwrite_Font_Table       font_table;
 };
 
 typedef struct 
@@ -218,6 +233,14 @@ typedef struct
 
 // -------------------------------------
 // @Note: Code
+function U64 dwrite_hash_glyph_index(U16 idx);
+function Dwrite_Glyph_Table_Entry *dwrite_get_glyph_entry_from_table(Dwrite_Glyph_Table glyph_table, U16 glyph_index);
+function void dwrite_insert_glyph_cel_to_table(Dwrite_Glyph_Table *glyph_table, U16 glyph_index, Glyph_Cel cel);
+
+function U64 dwrite_hash_font(IDWriteFontFace *key);
+function Dwrite_Font_Table_Entry *dwrite_get_entry_from_font_table(IDWriteFontFace *font_face);
+function void dwrite_insert_font_to_table(IDWriteFontFace *font_face, Dwrite_Font_Metrics metrics);
+
 function Dwrite_Map_Complexity_Result dwrite_map_complexity(IDWriteTextAnalyzer1 *text_analyzer, IDWriteFontFace *font_face, WCHAR *text, U32 text_length);
 function Dwrite_Font_Fallback_Result dwrite_font_fallback(IDWriteFontFallback *font_fallback, IDWriteFontCollection *font_collection, WCHAR *base_family, WCHAR *locale, WCHAR *text, UINT32 text_length);
 function DWRITE_GLYPH_RUN *dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback, IDWriteFontCollection *font_collection, IDWriteTextAnalyzer1 *text_analyzer, WCHAR *locale, WCHAR *base_family, FLOAT pt_per_em, FLOAT px_per_inch, WCHAR *text, U32 text_length);

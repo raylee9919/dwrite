@@ -43,13 +43,12 @@ struct Bin
 };
 
 function void
-dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
-                                   B32 is_cleartype,
+dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
                                    DWRITE_GLYPH_RUN run,
                                    DWRITE_RENDERING_MODE1 rendering_mode,
                                    DWRITE_MEASURING_MODE measuring_mode,
                                    DWRITE_GRID_FIT_MODE grid_fit_mode,
-                                   Dwrite_Inner_Hash_Table **hash_table_in,
+                                   Dwrite_Glyph_Table *glyph_table,
                                    Bitmap atlas,
                                    Bin *atlas_partition_sentinel,
                                    Glyph_Cel_Array *glyph_cels)
@@ -60,11 +59,10 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
 
     U64 glyph_count = arrlenu(run.glyphIndices);
     IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
-    assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
-    Dwrite_Font_Metrics font_metrics = hmget(dwrite.font_hash_table, run.fontFace);
 
-    //F32 em_per_du = 1.0f / font_metrics.du_per_em;
-    //F32 px_per_du = run.fontEmSize * em_per_du;
+    Dwrite_Font_Table_Entry *font_entry = dwrite_get_entry_from_font_table(font_face);
+    assert(font_entry);
+    Dwrite_Font_Metrics font_metrics = font_entry->metrics;
 
     DWRITE_TEXTURE_TYPE texture_type = (is_cleartype) ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
 
@@ -73,7 +71,9 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
     {
         U16 glyph_index = run.glyphIndices[i];
 
-        if (hmgeti(*hash_table_in, glyph_index) == -1) // glyph index doesn't exist in the inner-table
+        Dwrite_Glyph_Table_Entry *entry = dwrite_get_glyph_entry_from_table(*glyph_table, glyph_index);
+
+        if (! entry) // glyph index doesn't exist in the inner-table
         {
             // Get single glyph's metrics.
             DWRITE_GLYPH_METRICS metrics = {};
@@ -99,7 +99,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
             }
 
             IDWriteGlyphRunAnalysis *analysis = NULL;
-            win32_assume_hr(dwrite_factory->CreateGlyphRunAnalysis(&single_glyph_run,
+            win32_assume_hr(dwrite.factory->CreateGlyphRunAnalysis(&single_glyph_run,
                                                                    NULL, // transform
                                                                    rendering_mode,
                                                                    measuring_mode,
@@ -228,7 +228,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                     assume(! "x");
                 }
 
-                cel.is_empty        = false;
+                cel.is_empty     = false;
                 cel.uv_min       = {(F32)(x1 + margin) / (F32)atlas.width, (F32)(y1 + margin) / (F32)atlas.height};
                 cel.uv_max       = {(F32)(x2 - margin) / (F32)atlas.width, (F32)(y2 - margin) / (F32)atlas.height};
                 cel.width_px     = (F32)blackbox_width;
@@ -238,7 +238,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
             }
             else
             {
-                cel.is_empty        = true;
+                cel.is_empty     = true;
                 cel.uv_min       = V2{0.0f, 0.0f};
                 cel.uv_max       = V2{0.0f, 0.0f};
                 cel.width_px     = 0.0f;
@@ -247,15 +247,15 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                 cel.offset_px.y  = 0.0f;
             }
 
-            darr_push(glyph_cels, cel);
-            hmput(*hash_table_in, glyph_index, cel);
+            dar_push(glyph_cels, cel);
+            dwrite_insert_glyph_cel_to_table(glyph_table, glyph_index, cel);
 
             analysis->Release();
         }
         else  // glyph index exists in the inner-table
         {
-            Glyph_Cel cel = hmget(*hash_table_in, glyph_index);
-            darr_push(glyph_cels, cel);
+            Glyph_Cel cel = entry->cel;
+            dar_push(glyph_cels, cel);
         }
     }
 
@@ -295,11 +295,6 @@ main_entry(void)
         Dwrite_Get_Base_Font_Family_Index_Result family = dwrite_get_base_font_family_index(base_font_family_name);
         assume(family.exists);
     }
-
-
-
-    // @Temporary:
-    Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
 
     B32 is_cleartype = TRUE;
@@ -519,8 +514,9 @@ main_entry(void)
     }
 
     wchar_t *text=L"But thereupon Éomer rode up in haste... and grief and dismay fell upon him as he came to the king's side and stood there in silence....And he looked at the slain, recalling their names. Then suddenly he beheld his sister Éowyn as she lay, and he knew her. He stood a moment as a man who is pierced in the midst of a cry by an arrow through the heart; and then his face went deathly white; and a cold fury rose in him, so that all speech failed him for a while. A fey mood took him. 'Éowyn, Éowyn!' he cried at last: 'Éowyn, how come you here? What madness or devilry is this? Death, death, death! Death take us all!' Then without taking counsel or waiting for the approach of the men of the City, he spurred headlong back to the front of the great host, and blew a horn, and cried aloud for the onset. Over the field rang his clear voice calling: 'Death! Ride, ride to ruin and the world's ending!' And with that the host began to move. But the Rohirrim sang no more. Death they cried with one voice loud and terrible, and gathering speed like a great tide their battle swept about their fallen king and passed, roaring away southwards. - LoTR: The Return of the King";
-    //wchar_t text=L"->";
-    //wchar_t text=L"LoTR";
+    //wchar_t *text=L"->";
+    //wchar_t *text=L"LoTR";
+    //wchar_t *text=L"English한글";
     U32 text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -566,7 +562,7 @@ main_entry(void)
         renderer.index_count  = 0;
 
         Glyph_Cel_Array glyph_cels = {};
-        darr_init(&glyph_cels, frame_arena);
+        dar_init(&glyph_cels, frame_arena);
 
         // -----------------------------
         // @Temporary: Text Container
@@ -588,13 +584,15 @@ main_entry(void)
 
 
         U64 run_count = arrlenu(glyph_runs);
+
         for (U32 run_idx = 0; run_idx < run_count; ++run_idx)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[run_idx];
             IDWriteFontFace5 *font_face = (IDWriteFontFace5 *)run.fontFace;
 
-            assert(hmgeti(dwrite.font_hash_table, (U64)font_face) != -1);
-            Dwrite_Font_Metrics font_metrics = hmget(dwrite.font_hash_table, (U64)font_face);
+            Dwrite_Font_Table_Entry *font_entry = dwrite_get_entry_from_font_table(font_face);
+            assert(font_entry);
+            Dwrite_Font_Metrics font_metrics = font_entry->metrics;
 
             // @Note: Create rendering mode of a font face.
             DWRITE_RENDERING_MODE1 rendering_mode = DWRITE_RENDERING_MODE1_NATURAL;
@@ -612,23 +610,9 @@ main_entry(void)
                                                                    &grid_fit_mode));
 
 
-            // Look into 2-tier hash table.
-            if (hmgeti(atlas_hash_table_out, (U64)font_face) != -1/*exists*/)
-            {
-                Dwrite_Inner_Hash_Table **hash_table_in = hmget(atlas_hash_table_out, font_face);
-                dwrite_pack_glyphs_in_run_to_atlas(dwrite.factory, is_cleartype, run,
-                                                   rendering_mode, measuring_mode, grid_fit_mode,
-                                                   hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
-            }
-            else // font face doesn't exist in the outer-table
-            {
-                Dwrite_Inner_Hash_Table **hash_table_in = arena_push_struct(dwrite.arena, Dwrite_Inner_Hash_Table *);
-                *hash_table_in = NULL;
-                hmput(atlas_hash_table_out, (U64)font_face, hash_table_in);
-                dwrite_pack_glyphs_in_run_to_atlas(dwrite.factory, is_cleartype, run,
-                                                   rendering_mode, measuring_mode, grid_fit_mode,
-                                                   hash_table_in, atlas, atlas_partition_sentinel, &glyph_cels);
-            }
+            dwrite_pack_glyphs_in_run_to_atlas(is_cleartype, run,
+                                               rendering_mode, measuring_mode, grid_fit_mode,
+                                               &font_entry->glyph_table, atlas, atlas_partition_sentinel, &glyph_cels);
         }
 
         // -----------------------------------------
@@ -638,9 +622,11 @@ main_entry(void)
         for (U32 ri = 0; ri < run_count; ++ri)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
-            assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
+            Dwrite_Font_Table_Entry *font_entry = dwrite_get_entry_from_font_table(run.fontFace);
+            assert(font_entry);
+            Dwrite_Font_Metrics font_metrics = font_entry->metrics;
             // @Hack:
-            max_advance_height_px = max(max_advance_height_px, hmget(dwrite.font_hash_table, run.fontFace).advance_height_px);
+            max_advance_height_px = max(max_advance_height_px, font_metrics.advance_height_px);
         }
 
         V2 origin_local_px = {};
@@ -658,14 +644,16 @@ main_entry(void)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
 
-            assert(hmgeti(dwrite.font_hash_table, run.fontFace) != -1);
-            Dwrite_Font_Metrics metrics = hmget(dwrite.font_hash_table, run.fontFace);
+            Dwrite_Font_Table_Entry *font_entry = dwrite_get_entry_from_font_table(run.fontFace);
+            assert(font_entry);
+            Dwrite_Font_Metrics metrics = font_entry->metrics;
+
             F32 advance_height_px = metrics.advance_height_px;
 
             U64 glyph_count = arrlenu(run.glyphIndices);
             for (U32 gi = 0; gi < glyph_count; ++gi)
             {
-                Glyph_Cel cel = *((Glyph_Cel *)glyph_cels.data.base + gi);
+                Glyph_Cel cel = *((Glyph_Cel *)glyph_cels.base + gi);
                 F32 advance_x_px = run.glyphAdvances[gi];
 
                 // If not empty glyph,
@@ -674,7 +662,7 @@ main_entry(void)
                     // @Todo: line wrap by grapheme.
                     if (gi < glyph_count - 1)
                     {
-                        Glyph_Cel next_cel = ((Glyph_Cel *)glyph_cels.data.base)[gi + 1];
+                        Glyph_Cel next_cel = ((Glyph_Cel *)glyph_cels.base)[gi + 1];
                         F32 next_baseline = origin_local_px.x + advance_x_px;
                         F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_cel.offset_px.x + next_cel.width_px;
                         if (next_glyph_blackbox_end_px >= container_width_px)

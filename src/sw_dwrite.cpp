@@ -1,3 +1,169 @@
+// ---------------------------------
+// @Note: 2nd Tier Glyph Hash Table
+function U64
+dwrite_hash_glyph_index(U16 idx)
+{
+    // @Todo: Better hash
+    U64 result = (U64)idx * 16;
+    return result;
+}
+
+function Dwrite_Glyph_Table_Entry *
+dwrite_get_glyph_entry_from_table(Dwrite_Glyph_Table glyph_table, U16 glyph_index)
+{
+    Dwrite_Glyph_Table_Entry *result = NULL;
+
+    U64 hashed = dwrite_hash_glyph_index(glyph_index);
+    U64 entry_count = glyph_table.entry_count;
+    U64 home_position = (hashed % entry_count);
+
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 idx = (home_position + i) % entry_count;
+
+        if (glyph_table.entries[idx].occupied)
+        { 
+            if (glyph_table.entries[idx].idx == glyph_index)
+            {
+                result = glyph_table.entries + idx;
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+function void
+dwrite_insert_glyph_cel_to_table(Dwrite_Glyph_Table *glyph_table, U16 glyph_index, Glyph_Cel cel)
+{
+    U64 hashed = dwrite_hash_glyph_index(glyph_index);
+    U64 entry_count = glyph_table->entry_count;
+    U64 home_position = (hashed % entry_count);
+
+    U64 idx_to_insert = home_position;
+    B32 found_place_to_insert = false;
+    B32 exists_already = false;
+
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 idx = (home_position + i) % entry_count;
+
+        if (glyph_table->entries[idx].occupied)
+        { 
+            if (glyph_table->entries[idx].idx == glyph_index)
+            {
+                exists_already = true;
+                break;
+            }
+        }
+        else if (! found_place_to_insert)
+        {
+            idx_to_insert = idx;
+            found_place_to_insert = true;
+        }
+    }
+
+    if (! exists_already)
+    {
+        if (found_place_to_insert)
+        {
+            Dwrite_Glyph_Table_Entry *entry = glyph_table->entries + idx_to_insert;
+            entry->idx      = glyph_index;
+            entry->cel      = cel;
+            entry->occupied = true;
+        }
+        else
+        {
+            assume(! "Insufficient hash table entries.");
+        }
+    }
+}
+
+// ---------------------------------
+// @Note: FontFace Hash Table (Outer Hash Table)
+function U64
+dwrite_hash_font(IDWriteFontFace *key)
+{
+    // @Todo: Better hash
+    U64 result = u64_from_ptr(key) + 1234;
+    return result;
+}
+
+function Dwrite_Font_Table_Entry *
+dwrite_get_entry_from_font_table(IDWriteFontFace *font_face)
+{
+    Dwrite_Font_Table_Entry *result = NULL;
+
+    U64 hashed = dwrite_hash_font(font_face);
+    U64 entry_count = dwrite.font_table.entry_count;
+    U64 home_position = (hashed % entry_count);
+
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 idx = (home_position + i) % entry_count;
+
+        if (dwrite.font_table.entries[idx].occupied)
+        { 
+            if (dwrite.font_table.entries[idx].key == font_face)
+            {
+                result = dwrite.font_table.entries + idx;
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+function void
+dwrite_insert_font_to_table(IDWriteFontFace *font_face, Dwrite_Font_Metrics metrics)
+{
+    U64 hashed = dwrite_hash_font(font_face);
+    U64 entry_count = dwrite.font_table.entry_count;
+    U64 home_position = (hashed % entry_count);
+
+    U64 idx_to_insert = home_position;
+    B32 found_place_to_insert = false;
+    B32 exists_already = false;
+
+    for (U64 i = 0; i < entry_count; ++i)
+    {
+        U64 idx = (home_position + i) % entry_count;
+
+        if (dwrite.font_table.entries[idx].occupied)
+        { 
+            if (dwrite.font_table.entries[idx].key == font_face)
+            {
+                exists_already = true;
+                break;
+            }
+        }
+        else if (! found_place_to_insert)
+        {
+            idx_to_insert = idx;
+            found_place_to_insert = true;
+        }
+    }
+
+    if (! exists_already)
+    {
+        if (found_place_to_insert)
+        {
+            Dwrite_Font_Table_Entry *entry = dwrite.font_table.entries + idx_to_insert;
+            entry->key      = font_face;
+            entry->metrics  = metrics;
+            entry->glyph_table.entry_count = 128;
+            entry->glyph_table.entries = arena_push_array(dwrite.arena, Dwrite_Glyph_Table_Entry, entry->glyph_table.entry_count); // @Todo: Proper arena
+            entry->occupied = true;
+        }
+        else
+        {
+            assume(! "Insufficient hash table entries.");
+        }
+    }
+}
+
 // @Note: Determines the longest run of characters that map 1:1 to glyphs without
 // ambiguity. In that case, it returns TRUE and you can immediately use indices.
 // Otherwise, perform full glyph shaping.
@@ -83,15 +249,14 @@ dwrite_map_text_to_glyphs(IDWriteFontFallback1 *font_fallback,
         max_advance_height_px = max(max_advance_height_px, advance_height_px);
 
         // --------------------------------------------------------------------
-        // @Note: Put to hash table.
         // @Important: Must not free a font face for this to work.
-        if (hmgeti(dwrite.font_hash_table, (U64)run_font_face) == -1) // !exists
+        // @Note:      Update font table.
+        Dwrite_Font_Metrics metrics = {};
         {
-            Dwrite_Font_Metrics metrics = {};
             metrics.du_per_em = du_per_em;
             metrics.advance_height_px = advance_height_px;
-            hmput(dwrite.font_hash_table, (U64)run_font_face, metrics);
         }
+        dwrite_insert_font_to_table(run_font_face, metrics);
 
         U16 *indices                 = NULL;
         FLOAT *advances              = NULL;
@@ -278,6 +443,8 @@ function void
 dwrite_init(void)
 {
     dwrite.arena = arena_alloc();
+    dwrite.font_table.entry_count = 32;
+    dwrite.font_table.entries = arena_push_array(dwrite.arena, Dwrite_Font_Table_Entry, dwrite.font_table.entry_count);
 
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite.factory), (IUnknown **)&dwrite.factory)))
     { dwrite_abort(L"DWriteCreateFactory() Error."); }
