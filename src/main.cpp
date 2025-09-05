@@ -41,7 +41,7 @@ struct Bin
     U32 x, y, w, h;
 };
 
-static void
+function void
 dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                                    B32 is_cleartype,
                                    DWRITE_GLYPH_RUN run,
@@ -108,7 +108,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                                                                    0.0f, // baselineOriginY
                                                                    &analysis));
 
-            // @Note:
+            // @Note: GetAlphaTextureBounds() -> RECT exaplanation.
             //
             // bounds.top ------++-----######--+
             //   (-7)           ||  ############
@@ -207,6 +207,7 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                             U8 *dst = atlas.data + (y1+r+margin)*atlas.pitch + (x1+c+margin)*4;
                             U8 *src = bitmap_data_rgb + r*blackbox_width*3 + c*3;
                             *(U32 *)dst = *(U32 *)src;
+#if 0
                             if (src[0] == 0 && src[1] == 0  && src[2] == 0)
                             {
                                 dst[3] = 0x00; 
@@ -215,6 +216,9 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
                             {
                                 dst[3] = 0xff; 
                             }
+#else
+                            dst[3] = 0xff; 
+#endif
                         }
                     }
                 }
@@ -260,18 +264,20 @@ dwrite_pack_glyphs_in_run_to_atlas(IDWriteFactory3 *dwrite_factory,
 function int
 main_entry(void)
 {
-    HRESULT hr = S_OK;
-
+    Arena *permanent_arena = arena_alloc();
     F64 counter_frequency_inverse = (1.0 / (F64)os_query_timer_frequency());
 
     Os_Window *window = os_create_window(1920, 1080, L"fönster");
-    assume(window);
-
-    Arena *permanent_arena = arena_alloc();
+    if (! window)
+    {
+        // @Fix: focus to caption.
+        os_gui_message(L"CAPTION", L"Could not create window");
+        os_abort();
+    }
 
     // -------------------------------
     // @Note: Init DWrite
-    F32 pt_per_em   = 81.0f;
+    F32 pt_per_em   = 16.0f;
     F32 px_per_inch = (F32)os_get_dpi(window);
 
     IDWriteFactory3 *dwrite_factory = NULL;
@@ -282,18 +288,24 @@ main_entry(void)
 
     Dwrite_Outer_Hash_Table *atlas_hash_table_out = NULL;
 
-    WCHAR *base_font_family_name = L"Fira Code";
+    WCHAR *fonts[] = 
+    {
+        L"Fira Code",           // 0
+        L"Consolas",            // 1
+        L"Times New Roman",     // 2
+        L"Roboto Mono",         // 3
+        L"Zapfino",             // 4
+        L"EB Garamond",         // 5
+    };
+    WCHAR *base_font_family_name = fonts[5];
     U32 family_index = 0;
     BOOL family_exists = FALSE;
     win32_assume_hr(font_collection->FindFamilyName(base_font_family_name, &family_index, &family_exists));
 
-    // @Note: Since fallback will be performed, finding base family isn't really necessary for our case.
-    // But you may want to find if the base font-family exists in the system initially.
-    assert(family_exists);
+    assume(family_exists);
 
-    // @Note: 
-    // 'IDWriteTextLayout' allows you to map a string and a base font into chunks of string with a resolved font.
-    // For example, if there's a emoji in the string, it would automatically fallback from the builtin font to Segoe UI (the emoji font on Windows). 
+    // @Note: IDWriteTextLayout allows you to map a string and a base font into chunks of string with a resolved font.
+    //        For example, if there's a emoji in the string, it would automatically fallback from the builtin font to Segoe UI (the emoji font on Windows). 
     IDWriteFontFallback *font_fallback = NULL;
     win32_assume_hr(dwrite_factory->GetSystemFontFallback(&font_fallback));
 
@@ -305,7 +317,6 @@ main_entry(void)
 
     IDWriteTextAnalyzer1 *text_analyzer1 = NULL;
     win32_assume_hr(text_analyzer->QueryInterface(__uuidof(text_analyzer1), (void **)&text_analyzer1));
-
 
     WCHAR locale[LOCALE_NAME_MAX_LENGTH]; // LOCALE_NAME_MAX_LENGTH includes a terminating null character.
     if (! GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH))
@@ -443,7 +454,7 @@ main_entry(void)
     // @Note: Create Sampler State
     D3D11_SAMPLER_DESC sampler_desc = {};
     {
-        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR; //D3D11_FILTER_MIN_MAG_MIP_POINT;
+        sampler_desc.Filter         = D3D11_FILTER_MIN_MAG_MIP_POINT;
         sampler_desc.AddressU       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressV       = D3D11_TEXTURE_ADDRESS_BORDER;
         sampler_desc.AddressW       = D3D11_TEXTURE_ADDRESS_BORDER;
@@ -492,27 +503,49 @@ main_entry(void)
     // ------------------------------
     // @Note: Create Blend State
 
-    D3D11_BLEND_DESC blend_desc = {};
+    ID3D11BlendState *blend_state = NULL;
     {
-        D3D11_RENDER_TARGET_BLEND_DESC target_blend_desc = {};
+        D3D11_BLEND_DESC blend_desc = {};
         {
-            target_blend_desc.BlendEnable           = TRUE;
-            target_blend_desc.SrcBlend              = D3D11_BLEND_ONE;
-            target_blend_desc.DestBlend             = D3D11_BLEND_INV_SRC1_COLOR;
-            target_blend_desc.BlendOp               = D3D11_BLEND_OP_ADD;
-            target_blend_desc.SrcBlendAlpha         = D3D11_BLEND_ONE;
-            target_blend_desc.DestBlendAlpha        = D3D11_BLEND_INV_SRC1_ALPHA;
-            target_blend_desc.BlendOpAlpha          = D3D11_BLEND_OP_ADD;
-            target_blend_desc.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            D3D11_RENDER_TARGET_BLEND_DESC target_blend_desc = {};
+            {
+                target_blend_desc.BlendEnable           = TRUE;
+                target_blend_desc.SrcBlend              = D3D11_BLEND_SRC_ALPHA;
+                target_blend_desc.DestBlend             = D3D11_BLEND_INV_SRC_ALPHA;
+                target_blend_desc.BlendOp               = D3D11_BLEND_OP_ADD;
+                target_blend_desc.SrcBlendAlpha         = D3D11_BLEND_ONE;
+                target_blend_desc.DestBlendAlpha        = D3D11_BLEND_ONE;
+                target_blend_desc.BlendOpAlpha          = D3D11_BLEND_OP_ADD;
+                target_blend_desc.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            }
+            blend_desc.AlphaToCoverageEnable  = FALSE;
+            blend_desc.IndependentBlendEnable = FALSE;
+            blend_desc.RenderTarget[0]        = target_blend_desc;
         }
-        blend_desc.AlphaToCoverageEnable  = FALSE;
-        blend_desc.IndependentBlendEnable = FALSE;
-        blend_desc.RenderTarget[0]        = target_blend_desc;
+        assume(SUCCEEDED(d3d11.device->CreateBlendState(&blend_desc, &blend_state)));
     }
 
-    ID3D11BlendState *blend_state = NULL;
-    hr = d3d11.device->CreateBlendState(&blend_desc, &blend_state);
-    assume(SUCCEEDED(hr));
+    ID3D11BlendState *glyph_blend_state = NULL;
+    {
+        D3D11_BLEND_DESC blend_desc = {};
+        {
+            D3D11_RENDER_TARGET_BLEND_DESC target_blend_desc = {};
+            {
+                target_blend_desc.BlendEnable           = TRUE;
+                target_blend_desc.SrcBlend              = D3D11_BLEND_ONE;
+                target_blend_desc.DestBlend             = D3D11_BLEND_ONE;
+                target_blend_desc.BlendOp               = D3D11_BLEND_OP_MAX;
+                target_blend_desc.SrcBlendAlpha         = D3D11_BLEND_ONE;
+                target_blend_desc.DestBlendAlpha        = D3D11_BLEND_INV_SRC1_ALPHA;
+                target_blend_desc.BlendOpAlpha          = D3D11_BLEND_OP_ADD;
+                target_blend_desc.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            }
+            blend_desc.AlphaToCoverageEnable  = FALSE;
+            blend_desc.IndependentBlendEnable = FALSE;
+            blend_desc.RenderTarget[0]        = target_blend_desc;
+        }
+        assume(SUCCEEDED(d3d11.device->CreateBlendState(&blend_desc, &glyph_blend_state)));
+    }
 
     U64 last_counter;
     {
@@ -524,8 +557,8 @@ main_entry(void)
     WCHAR *text = arena_push_array(permanent_arena, WCHAR, 65536);
     U32 text_length = 0;
 
-    //text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
-    text=L"->";
+    text=L"“PIPPIN: I didn't think it would end this way. GANDALF: End? No, the journey doesn't end here. Death is just another path, one that we all must take. The grey rain-curtain of this world rolls back, and all turns to silver glass, and then you see it. PIPPIN: What? Gandalf? See what? GANDALF: White shores, and beyond, a far green country under a swift sunrise. PIPPIN: Well, that isn't so bad. GANDALF: No. No, it isn't.”";
+    //text=L"->";
     text_length = (U32)wcslen(text);
 
     // ------------------------------
@@ -575,7 +608,8 @@ main_entry(void)
 
         // -----------------------------
         // @Note: Text container.
-        V2 container_origin_px  = V2{100.0f, 700.0f}; // minx, maxy
+        V2 container_origin_px  = V2{0.0f, 700.0f};
+
 #if 1
         F32 container_width_px  = (sinf((F32)time*0.7f)*0.5f+0.5f) * 1000.0f;
         F32 container_height_px = (cosf((F32)time*0.5f)*0.5f+0.5f) * 300.0f;
@@ -643,6 +677,7 @@ main_entry(void)
         {
             DWRITE_GLYPH_RUN run = glyph_runs[ri];
             assert(hmgeti(dwrite_font_hash_table, run.fontFace) != -1);
+            // @Hack:
             max_advance_height_px = max(max_advance_height_px, hmget(dwrite_font_hash_table, run.fontFace).advance_height_px);
         }
 
@@ -677,9 +712,9 @@ main_entry(void)
                     // @Todo: line wrap by grapheme.
                     if (gi < glyph_count - 1)
                     {
-                        Glyph_Cel next_glyph_cel = *((Glyph_Cel *)glyph_cels.data.base + gi + 1);
+                        Glyph_Cel next_cel = ((Glyph_Cel *)glyph_cels.data.base)[gi + 1];
                         F32 next_baseline = origin_local_px.x + advance_x_px;
-                        F32 next_glyph_blackbox_end_px = next_baseline + run.glyphOffsets[gi + 1].advanceOffset + next_glyph_cel.offset_px.x + next_glyph_cel.width_px;
+                        F32 next_glyph_blackbox_end_px = next_baseline + /*run.glyphOffsets[gi + 1].advanceOffset*/ + next_cel.offset_px.x + next_cel.width_px;
                         if (next_glyph_blackbox_end_px >= container_width_px)
                         {
                             origin_local_px.x = 0.0f;
@@ -691,8 +726,8 @@ main_entry(void)
                     V2 origin_global_px = origin_local_px + origin_translate_px;
 
                     // @Todo: Understand those and decide if I should hoist them out.
-                    origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
-                    origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
+                    //origin_global_px.x += run.glyphOffsets[gi].advanceOffset;
+                    //origin_global_px.y += run.glyphOffsets[gi].ascenderOffset;
 
                     V2 min_px, max_px;
                     {
@@ -712,7 +747,8 @@ main_entry(void)
 
                     AABB2 box_cel = AABB2{min_px, max_px};
 
-                    // @Fix: intersection bug
+                    // @Todo: We are not wrapping line by graphemes currently. Thus, it'll sometimes look like 
+                    //        glyphs are disappearing by nowhere.
                     if (intersects(box_container, box_cel))
                     {
                         // @Todo: intersection() does some duplicate operations to intersects().
@@ -742,7 +778,7 @@ main_entry(void)
         // -----------------------
         // @Note: D3D11 Pass
 
-        // @Temporary: Convert to NDC on CPU-side.
+        // @Hack: Convert to NDC on CPU-side.
         for (U32 i = 0; i < renderer.vertex_count; ++i)
         {
             renderer.vertices[i].pos.x = (renderer.vertices[i].pos.x * 2.0f / window_width) - 1.0f;
@@ -819,7 +855,7 @@ main_entry(void)
             d3d11.device_ctx->PSSetSamplers(0, 1, &sampler_state);
 
             d3d11.device_ctx->OMSetRenderTargets(1, &d3d11.framebuffer_view, NULL/*Depth-Stencil View*/);
-            d3d11.device_ctx->OMSetBlendState(blend_state, NULL, 0xffffffff);
+            d3d11.device_ctx->OMSetBlendState(glyph_blend_state, NULL, 0xffffffff);
 
             // @Hack:
 #if 1
