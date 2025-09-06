@@ -147,7 +147,7 @@ dwrite_pack_glyphs_in_run_to_atlas(B32 is_cleartype,
                 U32 bitmap_height = blackbox_height + 2*margin;
 
                 U32 rgb_bitmap_size = (is_cleartype) ? (blackbox_width*3)*blackbox_height : blackbox_width*blackbox_height; 
-                U8 *bitmap_data_rgb = (U8 *)arena_push(scratch.arena, rgb_bitmap_size);
+                U8 *bitmap_data_rgb = (U8 *)push_size(scratch.arena, rgb_bitmap_size);
                 win32_assume_hr(analysis->CreateAlphaTexture(texture_type, &bounds, bitmap_data_rgb, rgb_bitmap_size));
 
                 B32 fit = false;
@@ -315,12 +315,12 @@ main_entry(void)
         atlas.width  = 1024;
         atlas.height = 1024;
         atlas.pitch  = (atlas.width << 2);
-        atlas.data   = (U8 *)arena_push(permanent_arena, atlas.pitch*atlas.height);
+        atlas.data   = (U8 *)push_size(permanent_arena, atlas.pitch*atlas.height);
     }
 
-    Bin *atlas_partition_sentinel = arena_push_struct(permanent_arena, Bin);
+    Bin *atlas_partition_sentinel = push_struct(permanent_arena, Bin);
     {
-        Bin *head = arena_push_struct(permanent_arena, Bin);
+        Bin *head = push_struct(permanent_arena, Bin);
         {
             head->prev = atlas_partition_sentinel;
             head->next = atlas_partition_sentinel;
@@ -546,7 +546,7 @@ main_entry(void)
     wchar_t *text = test_texts[2];
 #else
     U64 to = 0;
-    wchar_t *text = arena_push_array(permanent_arena, wchar_t, 1677216);
+    wchar_t *text = push_array(permanent_arena, wchar_t, 1677216);
     for (U32 i = 0; i < array_count(test_texts); ++i)
     {
         U64 len = wcslen(test_texts[i]);

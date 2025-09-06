@@ -154,7 +154,7 @@ dwrite_insert_font_to_table(IDWriteFontFace *font_face, Dwrite_Font_Metrics metr
             entry->key      = font_face;
             entry->metrics  = metrics;
             entry->glyph_table.entry_count = 256;
-            entry->glyph_table.entries = arena_push_array(dwrite.arena, Dwrite_Glyph_Table_Entry, entry->glyph_table.entry_count); // @Todo: Proper arena
+            entry->glyph_table.entries = push_array(dwrite.arena, Dwrite_Glyph_Table_Entry, entry->glyph_table.entry_count); // @Todo: Proper arena
             entry->occupied = true;
         }
         else
@@ -444,7 +444,7 @@ dwrite_init(void)
 {
     dwrite.arena = arena_alloc();
     dwrite.font_table.entry_count = 32;
-    dwrite.font_table.entries = arena_push_array(dwrite.arena, Dwrite_Font_Table_Entry, dwrite.font_table.entry_count);
+    dwrite.font_table.entries = push_array(dwrite.arena, Dwrite_Font_Table_Entry, dwrite.font_table.entry_count);
 
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(dwrite.factory), (IUnknown **)&dwrite.factory)))
     { dwrite_abort(L"DWriteCreateFactory() Error."); }
